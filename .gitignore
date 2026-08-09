@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local tooling
+.claude/
+*.log
+
+# Packaged builds / signing keys — never commit these
+*.zip
+*.crx
+*.pem

@@ -1,0 +1,180 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #667085;
+  --card: #f6f7f9;
+  --border: #e4e7ec;
+  --primary: #2563eb;
+  --primary-fg: #ffffff;
+  --good: #157347;
+  --good-bg: #e6f4ea;
+  --warn: #8a6d00;
+  --warn-bg: #fdf3d7;
+  --bad: #b42318;
+  --bad-bg: #fde3e1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --fg: #e7e9ee;
+    --muted: #9aa2b1;
+    --card: #1e2128;
+    --border: #2c3038;
+    --primary: #3b82f6;
+    --primary-fg: #ffffff;
+    --good: #4ade80;
+    --good-bg: #16301f;
+    --warn: #fbbf24;
+    --warn-bg: #322808;
+    --bad: #f87171;
+    --bad-bg: #3a1714;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 12px;
+  font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+header h1 { margin: 0; font-size: 16px; letter-spacing: -0.2px; }
+.tag { margin: 2px 0 10px; color: var(--muted); font-size: 11px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.card-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+.card .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--primary);
+}
+.card p { margin: 4px 0 8px; }
+
+details { margin-top: 8px; }
+summary { cursor: pointer; color: var(--primary); font-size: 12px; }
+details ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+code {
+  background: var(--border); padding: 1px 5px; border-radius: 4px; font-size: 11px;
+}
+
+.controls {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.switch { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.provider { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+select {
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px;
+}
+
+.list-head { display: flex; align-items: center; justify-content: space-between; }
+.list-head h2 { font-size: 12px; margin: 4px 0; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
+
+.list { list-style: none; margin: 4px 0 0; padding: 0; }
+.item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+}
+.item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.host { font-weight: 600; word-break: break-all; }
+.badge {
+  flex: none; font-size: 10px; padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  background: var(--warn-bg); color: var(--warn);
+}
+.badge.good { background: var(--good-bg); color: var(--good); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.bad  { background: var(--bad-bg);  color: var(--bad); }
+.remedy { margin: 6px 0 4px; }
+.diag { margin: 0 0 4px; }
+.ips { margin-bottom: 6px; word-break: break-all; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--primary); }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); width: 100%; }
+.btn.small { padding: 4px 9px; font-size: 11px; }
+.btn.ghost { background: transparent; color: var(--muted); }
+
+.empty { text-align: center; padding: 14px 8px; }
+
+footer { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+
+.btn.tiny { padding: 2px 6px; font-size: 11px; line-height: 1; }
+
+/* status / health pills */
+.pill {
+  margin-left: auto; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+  background: var(--border); color: var(--muted); white-space: nowrap;
+}
+.pill.good { background: var(--good-bg); color: var(--good); }
+.pill.muted { background: var(--border); color: var(--muted); }
+
+.chip {
+  display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  background: var(--warn-bg); color: var(--warn);
+}
+.chip.good { background: var(--good-bg); color: var(--good); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.bad  { background: var(--bad-bg);  color: var(--bad); }
+.chip.muted { background: var(--border); color: var(--muted); }
+
+.statusline { margin: 4px 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+/* transports list */
+.tlist { list-style: none; margin: 2px 0 6px; padding: 0; }
+.titem { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--border); }
+.titem:last-child { border-bottom: none; }
+.tradio { display: flex; align-items: center; }
+.thealth { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+.thealth.good { background: var(--good); }
+.thealth.warn { background: var(--warn); }
+.thealth.bad  { background: var(--bad); }
+.thealth.muted { background: var(--muted); opacity: 0.5; }
+.tmeta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tlabel { font-weight: 600; }
+.tendpoint { word-break: break-all; }
+
+/* add-transport form */
+.form { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.form .row { display: flex; gap: 6px; }
+.form input, .form select {
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 12px; min-width: 0;
+}
+.form .row input { flex: 1; }
+.form .row select { flex: none; }
+
+/* controls wrap on the narrow popup */
+.controls { flex-wrap: wrap; }
+.controls .switch span { font-size: 12px; }
+
+.rungpick { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.rungpick select {
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; font-size: 11px;
+}

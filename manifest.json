@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "OpenRoute — Unblock & Route",
+  "version": "0.3.0",
+  "description": "Detects blocked sites, diagnoses how they're blocked, and auto-routes only those domains down a failover ladder (Secure DNS → proxy → Tor) at full speed. Personal use.",
+  "minimum_chrome_version": "108",
+  "permissions": [
+    "webNavigation",
+    "storage",
+    "activeTab",
+    "proxy",
+    "alarms",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://cloudflare-dns.com/*",
+    "https://1.1.1.1/*",
+    "https://1.0.0.1/*",
+    "https://dns.google/*",
+    "https://8.8.8.8/*",
+    "https://8.8.4.4/*",
+    "https://dns.quad9.net/*",
+    "https://9.9.9.9/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OpenRoute"
+  }
+}

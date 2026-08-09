@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>OpenRoute</h1>
+    <p class="tag">Detect · diagnose · auto-route blocked sites</p>
+  </header>
+
+  <!-- Transports ---------------------------------------------------------->
+  <section class="card">
+    <div class="card-head">
+      <span class="dot"></span>
+      <strong>Transports</strong>
+      <span id="companionPill" class="pill" title="Native companion status">companion: checking…</span>
+    </div>
+    <ul id="transportList" class="tlist"></ul>
+    <details>
+      <summary>Add a proxy</summary>
+      <div class="form">
+        <input id="tLabel" placeholder="Label (e.g. My VPS)" />
+        <div class="row">
+          <select id="tScheme">
+            <option value="socks5">SOCKS5</option>
+            <option value="http">HTTP</option>
+            <option value="socks4">SOCKS4</option>
+          </select>
+          <input id="tHost" placeholder="host / 127.0.0.1" />
+          <input id="tPort" placeholder="port" inputmode="numeric" />
+        </div>
+        <button id="tAdd" class="btn small primary">Add transport</button>
+      </div>
+      <p class="muted small">
+        No proxy yet? Run Tor Browser (SOCKS <code>127.0.0.1:9150</code>) and pick it above,
+        or install the companion for built-in Shadowsocks/Reality/Tor.
+      </p>
+    </details>
+  </section>
+
+  <!-- Secure DNS ---------------------------------------------------------->
+  <section class="card">
+    <div class="card-head"><span class="dot"></span><strong>Secure DNS (DoH)</strong></div>
+    <p class="muted">The zero-latency fix for DNS-based blocks. Turn it on once.</p>
+    <button id="openDns" class="btn primary">Open Secure DNS settings</button>
+  </section>
+
+  <!-- Controls ------------------------------------------------------------>
+  <section class="controls">
+    <label class="switch"><input type="checkbox" id="autoRoute" /><span>Auto-route</span></label>
+    <label class="switch"><input type="checkbox" id="autoReload" /><span>Auto-reload</span></label>
+    <label class="switch"><input type="checkbox" id="detectionToggle" /><span>Detect</span></label>
+    <label class="provider">DoH
+      <select id="providerSelect">
+        <option value="cloudflare">Cloudflare</option>
+        <option value="google">Google</option>
+        <option value="quad9">Quad9</option>
+      </select>
+    </label>
+  </section>
+
+  <!-- Sites --------------------------------------------------------------->
+  <section class="list-head">
+    <h2>Sites (<span id="count">0</span>)</h2>
+    <button id="clearAll" class="btn ghost">Clear</button>
+  </section>
+  <ul id="list" class="list"></ul>
+  <p id="empty" class="empty muted">No blocks yet. Browse normally — sites that fail show up here, diagnosed and routed.</p>
+
+  <footer>
+    <p class="muted small">
+      Circumvention, <b>not</b> anonymity — a proxy you run is tied to you. No tool is unblockable;
+      OpenRoute stacks fallbacks so something usually gets through. Personal-use tool.
+    </p>
+  </footer>
+
+  <!-- Templates ----------------------------------------------------------->
+  <template id="transportTpl">
+    <li class="titem">
+      <label class="tradio"><input type="radio" name="activeT" class="tactive" /></label>
+      <span class="thealth" title="health"></span>
+      <div class="tmeta">
+        <span class="tlabel"></span>
+        <span class="tendpoint muted small"></span>
+      </div>
+      <button class="btn tiny ghost tremove" title="Remove">✕</button>
+    </li>
+  </template>
+
+  <template id="itemTpl">
+    <li class="item">
+      <div class="item-top">
+        <span class="host"></span>
+        <span class="badge"></span>
+      </div>
+      <div class="statusline small"></div>
+      <p class="remedy muted small"></p>
+      <div class="diag muted small"></div>
+      <div class="ips muted small"></div>
+      <div class="actions">
+        <label class="rungpick small">route
+          <select class="rungSelect"></select>
+        </label>
+        <button class="btn small retry">Retry</button>
+        <button class="btn small recheck">Recheck</button>
+        <button class="btn small wayback">Wayback</button>
+        <button class="btn small reader">Reader</button>
+        <button class="btn small ghost remove">Remove</button>
+      </div>
+    </li>
+  </template>
+
+  <script src="popup.js"></script>
+</body>
+</html>
