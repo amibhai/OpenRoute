@@ -38,7 +38,9 @@ export function defaults() {
 
 export async function list() {
   const { [TRANSPORTS_KEY]: t } = await chrome.storage.local.get(TRANSPORTS_KEY);
-  return Array.isArray(t) && t.length ? t : defaults();
+  // Absent (first run) → seed with defaults. An intentionally-emptied array is
+  // respected as-is, so a user who deletes the presets doesn't see them return.
+  return Array.isArray(t) ? t : defaults();
 }
 
 export async function save(transports) {
