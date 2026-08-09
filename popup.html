@@ -38,6 +38,22 @@
         or install the companion for built-in Shadowsocks/Reality/Tor.
       </p>
     </details>
+    <details id="companionBox">
+      <summary>Connect via companion</summary>
+      <div class="form">
+        <input id="cLink" placeholder="ss:// or vless:// share link" />
+        <input id="cLabel" placeholder="Label (e.g. My VPS)" />
+        <div class="row">
+          <button id="cConnect" class="btn small primary">Connect</button>
+          <button id="cDisconnect" class="btn small ghost">Disconnect</button>
+        </div>
+        <p id="cStatus" class="muted small"></p>
+      </div>
+      <p class="muted small">
+        Routes your VPS transport (Shadowsocks-2022 / VLESS-Reality) through the local
+        companion app. Requires the companion + <code>sing-box</code> installed.
+      </p>
+    </details>
   </section>
 
   <!-- Secure DNS ---------------------------------------------------------->

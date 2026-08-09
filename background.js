@@ -220,7 +220,33 @@ const HANDLERS = {
   },
   async addTransport({ transport }) { return { transports: await transports.upsert(transport) }; },
   async removeTransport({ id }) { await transports.remove(id); await router.apply(); return { transports: await transports.list() }; },
-  async setActiveTransport({ id }) { await transports.setActiveId(id); return { ok: true }; }
+  async setActiveTransport({ id }) { await transports.setActiveId(id); return { ok: true }; },
+
+  // Companion (Phase B): drive the native host to bring up a real transport.
+  async companionConnect({ link, label }) {
+    nm.invalidate();
+    const result = await nm.send({ cmd: "connect", id: "companion", label: label || "Companion", link });
+    if (result?.ok) {
+      await transports.upsert({
+        id: "companion", label: label || "Companion", scheme: "socks5",
+        host: "127.0.0.1", port: result.socksPort || 1080, kind: "companion", builtin: false
+      });
+      await transports.setActiveId("companion");
+      await router.apply();
+    }
+    return { result };
+  },
+  async companionDisconnect() {
+    let result;
+    try { result = await nm.send({ cmd: "disconnect" }); } catch (e) { result = { ok: false, error: String(e) }; }
+    await transports.remove("companion");
+    await router.apply();
+    return { result };
+  },
+  async companionStatus() {
+    try { return { status: await nm.send({ cmd: "status" }) }; }
+    catch (e) { return { status: { ok: false, error: String(e) } }; }
+  }
 };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

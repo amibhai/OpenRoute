@@ -17,3 +17,8 @@ desktop.ini
 *.zip
 *.crx
 *.pem
+
+# Companion build output
+companion/bin/
+openroute-host
+openroute-host.exe

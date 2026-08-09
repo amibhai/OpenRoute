@@ -1,0 +1,9 @@
+{
+  "name": "com.openroute.host",
+  "description": "OpenRoute native companion",
+  "path": "{{BIN_PATH}}",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://{{EXT_ID}}/"
+  ]
+}

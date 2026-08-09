@@ -120,10 +120,13 @@ companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
 
 ## Roadmap
 
-- **Phase A (done)** — failover ladder + split-tunnel proxy routing
+- **Phase A (done, tested)** — failover ladder + split-tunnel proxy routing
   (`chrome.proxy` + PAC), per-domain policy, verifier, transport health.
-- **Phase B** — native companion (Go + sing-box) exposing built-in
-  Shadowsocks-2022 / VLESS-Reality / WireGuard, DNS-through-companion, health API.
+  Logic covered by a Node harness (32 assertions).
+- **Phase B (scaffolded)** — native companion (Go + sing-box) exposing
+  Shadowsocks-2022 / VLESS-Reality via `ss://`/`vless://` links, DNS-through-
+  companion, health API, cross-OS installers. See [`companion/`](companion/).
+  Build & end-to-end test on your machine (`go build`; needs a `sing-box` binary).
 - **Phase C** — free-network fallbacks: Tor (+ obfs4/Snowflake bridges),
   Snowflake, health-checked public-proxy pool with rotation.
 - **Phase D** — one-command self-host for a hardened VPS (sing-box + Reality),
