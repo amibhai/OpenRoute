@@ -11,22 +11,60 @@ func dispatch(m *Manager, msg map[string]any) map[string]any {
 	switch cmd {
 	case "ping":
 		return map[string]any{"ok": true, "cmd": "pong", "version": version}
+
 	case "status":
-		return m.Status()
+		st := m.Status()
+		st["tor"] = m.tor.Transports()
+		return st
+
 	case "transports":
-		return map[string]any{"ok": true, "transports": m.Transports()}
+		ts := m.Transports()
+		ts = append(ts, m.tor.Transports()...)
+		return map[string]any{"ok": true, "transports": ts}
+
 	case "health":
-		return map[string]any{"ok": true, "transports": m.Health()}
+		hs := m.Health()
+		hs = append(hs, m.tor.Health()...)
+		return map[string]any{"ok": true, "transports": hs}
+
 	case "connect":
-		link, _ := msg["link"].(string)
+		links := toStringSlice(msg["links"])
+		if len(links) == 0 {
+			if l, _ := msg["link"].(string); l != "" {
+				links = []string{l}
+			}
+		}
 		id, _ := msg["id"].(string)
 		label, _ := msg["label"].(string)
-		return m.Connect(id, label, link)
+		return m.Connect(id, label, links)
+
+	case "connectTor":
+		mode, _ := msg["mode"].(string)
+		label, _ := msg["label"].(string)
+		return m.tor.Connect(mode, label, toStringSlice(msg["bridges"]))
+
 	case "disconnect":
-		return m.Disconnect()
+		kind, _ := msg["kind"].(string)
+		return m.disconnect(kind)
+
 	default:
 		return map[string]any{"ok": false, "error": "unknown cmd: " + cmd}
 	}
 }
 
 func errResp(msg string) map[string]any { return map[string]any{"ok": false, "error": msg} }
+
+// toStringSlice pulls a []string out of a decoded JSON array of strings.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}

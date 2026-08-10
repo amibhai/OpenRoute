@@ -15,11 +15,24 @@ its Clash API) rather than reimplementing anything security-critical.
 
 - Parses `ss://`, `vless://` (incl. TLS + **Reality**) share links, or a raw
   `{...}` sing-box outbound, into a working config.
+- **Pools & rotation (Phase C):** pass several links and they're wrapped in a
+  sing-box `urltest` group — it auto-selects the lowest-latency working node and
+  re-tests every few minutes, so a pool of public/VPS proxies self-heals.
+- **Tor (Phase C):** runs a detached `tor` with a dedicated SOCKS port (9250),
+  in `direct`, `obfs4`, or `snowflake` mode — the free, no-server rung for when
+  even a proxy IP is blocked. Health comes from Tor's control-port bootstrap %.
 - Runs sing-box with a `mixed` (SOCKS+HTTP) inbound + DNS-over-HTTPS **through the
   tunnel** (this is what an extension can't do — it closes the "Secure DNS is
   manual" gap).
 - Reports live health/latency per transport back to the extension via the Clash
   API delay test.
+
+### Extra binaries for Tor modes
+
+`tor` is required for any Tor mode; `obfs4` mode also needs **lyrebird** (or the
+older `obfs4proxy`); `snowflake` mode needs **snowflake-client**. All three ship
+inside Tor Browser — point the installer at them or drop them in the data dir.
+`obfs4` mode also needs `Bridge obfs4 …` lines from <https://bridges.torproject.org>.
 
 ## Requirements
 
@@ -60,11 +73,15 @@ transport; the ladder will route blocked domains through it.
 | → to host | ← response |
 |---|---|
 | `{cmd:"ping"}` | `{ok, cmd:"pong", version}` |
-| `{cmd:"status"}` | `{ok, running, socksPort, activeId, singboxOk}` |
-| `{cmd:"connect", link, id, label}` | `{ok, socksPort, id}` or `{ok:false, error}` |
-| `{cmd:"disconnect"}` | `{ok}` |
-| `{cmd:"transports"}` | `{ok, transports:[…]}` |
-| `{cmd:"health"}` | `{ok, transports:[{id, health, latencyMs}]}` |
+| `{cmd:"status"}` | `{ok, running, socksPort, activeId, singboxOk, tor:[…]}` |
+| `{cmd:"connect", link\|links, id, label}` | `{ok, socksPort, id, count}` or `{ok:false, error}` |
+| `{cmd:"connectTor", mode, label, bridges}` | `{ok, socksPort:9250, id:"companion-tor", mode}` |
+| `{cmd:"disconnect", kind}` | `{ok}` — `kind` = `singbox` \| `tor` \| omit for both |
+| `{cmd:"transports"}` | `{ok, transports:[…]}` (sing-box + Tor) |
+| `{cmd:"health"}` | `{ok, transports:[{id, health, latencyMs, bootstrap?}]}` |
+
+`connect` takes either a single `link` or a `links` array (pool). `mode` for
+`connectTor` is `direct`, `obfs4`, or `snowflake`.
 
 ## Test it end-to-end
 

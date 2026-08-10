@@ -14,7 +14,8 @@ let availCache = { value: false, at: 0 };
 
 // One-shot request/response over a fresh native port. Resolves with the first
 // message, rejects on disconnect/timeout. Never throws synchronously.
-export function send(message) {
+// Slow commands (bringing up sing-box/Tor) can pass a longer timeoutMs.
+export function send(message, timeoutMs = CALL_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     let port;
     let settled = false;
@@ -25,7 +26,7 @@ export function send(message) {
       try { port?.disconnect(); } catch {}
       fn(arg);
     };
-    const timer = setTimeout(() => done(reject, new Error("companion timeout")), CALL_TIMEOUT_MS);
+    const timer = setTimeout(() => done(reject, new Error("companion timeout")), timeoutMs);
 
     try {
       port = chrome.runtime.connectNative(HOST);

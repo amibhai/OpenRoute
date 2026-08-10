@@ -41,17 +41,26 @@
     <details id="companionBox">
       <summary>Connect via companion</summary>
       <div class="form">
-        <input id="cLink" placeholder="ss:// or vless:// share link" />
-        <input id="cLabel" placeholder="Label (e.g. My VPS)" />
+        <textarea id="cLink" rows="2" placeholder="ss:// or vless:// link — one per line for an auto-rotating pool"></textarea>
+        <input id="cLabel" placeholder="Label (e.g. My VPS / Pool)" />
         <div class="row">
           <button id="cConnect" class="btn small primary">Connect</button>
-          <button id="cDisconnect" class="btn small ghost">Disconnect</button>
+          <button id="cDisconnect" class="btn small ghost">Disconnect all</button>
+        </div>
+        <div class="row">
+          <select id="cTorMode">
+            <option value="direct">Tor · direct</option>
+            <option value="obfs4">Tor · obfs4 bridge</option>
+            <option value="snowflake">Tor · snowflake</option>
+          </select>
+          <button id="cTor" class="btn small">Connect Tor</button>
         </div>
         <p id="cStatus" class="muted small"></p>
       </div>
       <p class="muted small">
-        Routes your VPS transport (Shadowsocks-2022 / VLESS-Reality) through the local
-        companion app. Requires the companion + <code>sing-box</code> installed.
+        Runs your VPS transport (Shadowsocks-2022 / VLESS-Reality), an auto-rotating
+        pool, or free-network <b>Tor</b> (obfs4/snowflake for when Tor is blocked) through
+        the local companion. Requires the companion + <code>sing-box</code>/<code>tor</code> installed.
       </p>
     </details>
   </section>

@@ -222,10 +222,14 @@ const HANDLERS = {
   async removeTransport({ id }) { await transports.remove(id); await router.apply(); return { transports: await transports.list() }; },
   async setActiveTransport({ id }) { await transports.setActiveId(id); return { ok: true }; },
 
-  // Companion (Phase B): drive the native host to bring up a real transport.
-  async companionConnect({ link, label }) {
+  // Companion (Phase B/C): drive the native host to bring up real transports.
+  // One or many links → a single sing-box transport (a pool auto-rotates).
+  async companionConnect({ link, links, label }) {
     nm.invalidate();
-    const result = await nm.send({ cmd: "connect", id: "companion", label: label || "Companion", link });
+    const payload = { cmd: "connect", id: "companion", label: label || "Companion" };
+    if (Array.isArray(links) && links.length) payload.links = links;
+    else payload.link = link;
+    const result = await nm.send(payload, 25000);
     if (result?.ok) {
       await transports.upsert({
         id: "companion", label: label || "Companion", scheme: "socks5",
@@ -236,10 +240,29 @@ const HANDLERS = {
     }
     return { result };
   },
-  async companionDisconnect() {
+  // Phase C: free-network Tor rung (direct / obfs4 / snowflake).
+  async companionConnectTor({ mode, label, bridges }) {
+    nm.invalidate();
+    const m = mode || "direct";
+    const result = await nm.send(
+      { cmd: "connectTor", mode: m, label, bridges: Array.isArray(bridges) ? bridges : undefined }, 25000);
+    if (result?.ok) {
+      await transports.upsert({
+        id: "companion-tor", label: label || `Tor (${m})`, scheme: "socks5",
+        host: "127.0.0.1", port: result.socksPort || 9250, kind: "companion",
+        builtin: false, note: "free network · slower"
+      });
+      await router.apply();
+    }
+    return { result };
+  },
+  async companionDisconnect({ kind } = {}) {
     let result;
-    try { result = await nm.send({ cmd: "disconnect" }); } catch (e) { result = { ok: false, error: String(e) }; }
-    await transports.remove("companion");
+    try { result = await nm.send({ cmd: "disconnect", kind: kind || "" }); }
+    catch (e) { result = { ok: false, error: String(e) }; }
+    if (kind === "tor") await transports.remove("companion-tor");
+    else if (kind === "singbox" || kind === "companion") await transports.remove("companion");
+    else { await transports.remove("companion"); await transports.remove("companion-tor"); }
     await router.apply();
     return { result };
   },

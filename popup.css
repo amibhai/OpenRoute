@@ -162,10 +162,12 @@ footer { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px;
 /* add-transport form */
 .form { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .form .row { display: flex; gap: 6px; }
-.form input, .form select {
+.form input, .form select, .form textarea {
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 12px; min-width: 0;
 }
+.form textarea { width: 100%; resize: vertical; font-family: inherit; }
+.form .row select { flex: 1; }
 .form .row input { flex: 1; }
 .form .row select { flex: none; }
 

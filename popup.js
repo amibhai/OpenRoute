@@ -212,22 +212,40 @@ function initControls() {
   };
 
   $("#cConnect").onclick = async () => {
-    const link = $("#cLink").value.trim();
+    const links = $("#cLink").value.split("\n").map((s) => s.trim()).filter(Boolean);
     const label = $("#cLabel").value.trim();
     const status = $("#cStatus");
-    if (!link) { $("#cLink").focus(); return; }
+    if (!links.length) { $("#cLink").focus(); return; }
     const btn = $("#cConnect"); const old = btn.textContent;
     btn.textContent = "Connecting…"; btn.disabled = true;
     status.textContent = "";
-    const res = await send("companionConnect", { link, label });
+    const res = await send("companionConnect", { links, label });
     btn.textContent = old; btn.disabled = false;
     const inner = res?.result;
-    if (inner?.ok) { status.textContent = `Connected · SOCKS 127.0.0.1:${inner.socksPort}`; $("#cLink").value = ""; }
-    else { status.textContent = "Failed: " + (inner?.error || res?.error || "companion not installed"); }
+    if (inner?.ok) {
+      const pool = inner.count > 1 ? ` · pool of ${inner.count}` : "";
+      status.textContent = `Connected · SOCKS 127.0.0.1:${inner.socksPort}${pool}`;
+      $("#cLink").value = "";
+    } else {
+      status.textContent = "Failed: " + (inner?.error || res?.error || "companion not installed");
+    }
+    refresh();
+  };
+  $("#cTor").onclick = async () => {
+    const mode = $("#cTorMode").value;
+    const status = $("#cStatus");
+    const btn = $("#cTor"); const old = btn.textContent;
+    btn.textContent = "Starting Tor…"; btn.disabled = true;
+    status.textContent = "";
+    const res = await send("companionConnectTor", { mode });
+    btn.textContent = old; btn.disabled = false;
+    const inner = res?.result;
+    if (inner?.ok) status.textContent = `Tor (${inner.mode}) starting · SOCKS 127.0.0.1:${inner.socksPort} — bootstrap may take a moment`;
+    else status.textContent = "Tor failed: " + (inner?.error || res?.error || "companion not installed");
     refresh();
   };
   $("#cDisconnect").onclick = async () => {
-    await send("companionDisconnect");
+    await send("companionDisconnect", {});
     $("#cStatus").textContent = "Disconnected";
     refresh();
   };

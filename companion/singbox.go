@@ -38,6 +38,8 @@ type Manager struct {
 	mu       sync.Mutex
 	profiles []Profile
 	activeID string
+
+	tor *Tor // free-network engine (Phase C), managed independently
 }
 
 func NewManager(dir string) *Manager {
@@ -53,7 +55,22 @@ func NewManager(dir string) *Manager {
 	if b, err := os.ReadFile(m.activePath); err == nil {
 		m.activeID = strings.TrimSpace(string(b))
 	}
+	m.tor = NewTor(dir)
 	return m
+}
+
+// disconnect stops one engine ("singbox"/"tor") or, by default, both.
+func (m *Manager) disconnect(kind string) map[string]any {
+	switch kind {
+	case "tor":
+		return m.tor.Disconnect()
+	case "singbox", "companion":
+		return m.Disconnect()
+	default:
+		m.Disconnect()
+		m.tor.Disconnect()
+		return map[string]any{"ok": true}
+	}
 }
 
 func singBoxName() string {
@@ -80,18 +97,24 @@ func findSingBox(dir string) string {
 	return ""
 }
 
-// Connect parses a share link into a sing-box outbound, writes the config, and
-// (re)starts a detached sing-box so the browser can route through 127.0.0.1.
-func (m *Manager) Connect(id, label, link string) map[string]any {
+// Connect parses one or more share links into sing-box outbounds, writes the
+// config, and (re)starts a detached sing-box so the browser can route through
+// 127.0.0.1. Multiple links become a health-checked urltest pool that auto-picks
+// the fastest working node and rotates as they come and go.
+func (m *Manager) Connect(id, label string, links []string) map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if link == "" {
-		return errResp("no link provided")
+	if len(links) == 0 {
+		return errResp("no link(s) provided")
 	}
-	outbound, err := linkToOutbound(link)
-	if err != nil {
-		return errResp("parse link: " + err.Error())
+	outbounds := make([]map[string]any, 0, len(links))
+	for _, ln := range links {
+		ob, err := linkToOutbound(ln)
+		if err != nil {
+			return errResp("parse link: " + err.Error())
+		}
+		outbounds = append(outbounds, ob)
 	}
 	if id == "" {
 		id = "companion"
@@ -100,7 +123,7 @@ func (m *Manager) Connect(id, label, link string) map[string]any {
 		label = "Companion"
 	}
 
-	if err := m.writeConfig(outbound); err != nil {
+	if err := m.writeConfig(outbounds); err != nil {
 		return errResp("write config: " + err.Error())
 	}
 	if err := m.startLocked(); err != nil {
@@ -108,8 +131,8 @@ func (m *Manager) Connect(id, label, link string) map[string]any {
 	}
 
 	m.setActiveLocked(id)
-	m.upsertProfileLocked(Profile{ID: id, Label: label, Link: link})
-	return map[string]any{"ok": true, "socksPort": socksPort, "id": id}
+	m.upsertProfileLocked(Profile{ID: id, Label: label, Link: strings.Join(links, "\n")})
+	return map[string]any{"ok": true, "socksPort": socksPort, "id": id, "count": len(links)}
 }
 
 func (m *Manager) Disconnect() map[string]any {
@@ -176,8 +199,24 @@ func (m *Manager) Health() []map[string]any {
 
 // ---- internals (callers hold m.mu) -----------------------------------------
 
-func (m *Manager) writeConfig(outbound map[string]any) error {
-	outbound["tag"] = upstreamTag
+func (m *Manager) writeConfig(outbounds []map[string]any) error {
+	// Tag each upstream and wrap them in a urltest group, so a pool of upstreams
+	// auto-selects the lowest-latency working one and re-tests periodically —
+	// free health-checked rotation, and identical machinery for one or many.
+	tags := make([]string, 0, len(outbounds))
+	outs := make([]any, 0, len(outbounds)+2)
+	for i, ob := range outbounds {
+		tag := fmt.Sprintf("up-%d", i)
+		ob["tag"] = tag
+		tags = append(tags, tag)
+		outs = append(outs, ob)
+	}
+	outs = append(outs, map[string]any{
+		"type": "urltest", "tag": upstreamTag, "outbounds": tags,
+		"url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50,
+	})
+	outs = append(outs, map[string]any{"type": "direct", "tag": "direct"})
+
 	cfg := map[string]any{
 		"log": map[string]any{
 			"level": "warn", "output": filepath.Join(m.dir, "singbox.log"), "timestamp": true,
@@ -201,11 +240,8 @@ func (m *Manager) writeConfig(outbound map[string]any) error {
 				"listen_port": socksPort, "sniff": true,
 			},
 		},
-		"outbounds": []any{
-			outbound,
-			map[string]any{"type": "direct", "tag": "direct"},
-		},
-		"route": map[string]any{"final": upstreamTag, "auto_detect_interface": true},
+		"outbounds": outs,
+		"route":     map[string]any{"final": upstreamTag, "auto_detect_interface": true},
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

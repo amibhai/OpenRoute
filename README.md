@@ -127,8 +127,10 @@ companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
   Shadowsocks-2022 / VLESS-Reality via `ss://`/`vless://` links, DNS-through-
   companion, health API, cross-OS installers. See [`companion/`](companion/).
   Build & end-to-end test on your machine (`go build`; needs a `sing-box` binary).
-- **Phase C** — free-network fallbacks: Tor (+ obfs4/Snowflake bridges),
-  Snowflake, health-checked public-proxy pool with rotation.
+- **Phase C (scaffolded)** — free-network fallbacks in the companion: **Tor**
+  (`direct`/`obfs4`/`snowflake`, control-port bootstrap health) and **auto-rotating
+  pools** (multiple upstreams wrapped in a sing-box `urltest` group). Popup gains
+  a Tor-mode selector and a multi-link pool field.
 - **Phase D** — one-command self-host for a hardened VPS (sing-box + Reality),
   multi-region failover, one-click share-link/QR import.
 - **Phase E** — onboarding, cross-browser (Firefox/Edge), packaging, docs.
