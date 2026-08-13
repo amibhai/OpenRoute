@@ -120,7 +120,12 @@ async function ensureInit() {
 health.init();
 router.onProxyError((err) => console.warn("OpenRoute proxy error:", err?.error || err));
 
-chrome.runtime.onInstalled.addListener(() => { ensureInit(); });
+chrome.runtime.onInstalled.addListener((details) => {
+  ensureInit();
+  if (details.reason === "install") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") }).catch(() => {});
+  }
+});
 chrome.runtime.onStartup.addListener(() => { ensureInit(); });
 ensureInit(); // also run on cold service-worker start
 

@@ -1,0 +1,56 @@
+:root {
+  --bg: #f4f6f9; --fg: #1a1a1a; --muted: #667085; --card: #ffffff;
+  --border: #e4e7ec; --primary: #2563eb; --primary-fg: #fff; --accent: #eef2ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216; --fg: #e7e9ee; --muted: #9aa2b1; --card: #191c22;
+    --border: #2c3038; --primary: #3b82f6; --primary-fg: #fff; --accent: #16203a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.55 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+.wrap { max-width: 720px; margin: 0 auto; padding: 32px 20px 60px; }
+
+.hero { display: flex; gap: 16px; align-items: center; margin-bottom: 24px; }
+.hero img { border-radius: 12px; flex: none; }
+.hero h1 { margin: 0; font-size: 26px; letter-spacing: -0.4px; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px; margin-bottom: 16px;
+}
+.step { display: flex; gap: 16px; }
+.num {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--primary); color: var(--primary-fg);
+  display: grid; place-items: center; font-weight: 700; font-size: 15px;
+}
+.step h2 { margin: 2px 0 6px; font-size: 18px; }
+.step p { margin: 6px 0; }
+.hint { color: var(--muted); font-size: 13px; }
+
+.ladder { margin: 8px 0; padding-left: 18px; }
+.ladder li { margin: 3px 0; }
+
+.btn {
+  border: 1px solid var(--border); background: var(--card); color: var(--fg);
+  border-radius: 9px; padding: 9px 16px; font-size: 14px; cursor: pointer;
+}
+.btn:hover { border-color: var(--primary); }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+
+.reality {
+  background: var(--accent); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px 20px; margin: 8px 0 20px;
+}
+.reality h3 { margin: 0 0 6px; font-size: 15px; }
+.reality p { margin: 0; color: var(--fg); font-size: 14px; }
+
+.actions { display: flex; align-items: center; gap: 14px; }
+.muted { color: var(--muted); font-size: 13px; }
+code { background: var(--border); padding: 1px 5px; border-radius: 4px; font-size: 12px; }

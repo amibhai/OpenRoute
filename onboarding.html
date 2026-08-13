@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welcome to OpenRoute</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img src="icons/icon128.png" alt="OpenRoute" width="56" height="56" />
+      <div>
+        <h1>OpenRoute</h1>
+        <p class="sub">Detect what's blocking a site — then route only that site around it, at full speed.</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="step">
+        <span class="num">1</span>
+        <div>
+          <h2>Turn on Secure DNS</h2>
+          <p>The #1 cause of blocking is DNS tampering, and this is the zero-latency fix.
+             It takes one toggle in Chrome and OpenRoute will confirm it worked.</p>
+          <button id="openDns" class="btn primary">Open Secure DNS settings</button>
+          <p class="hint">Set <b>Use secure DNS</b> → <b>Cloudflare (1.1.1.1)</b> or <b>Google</b>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="step">
+        <span class="num">2</span>
+        <div>
+          <h2>Browse normally</h2>
+          <p>When a site fails to load, OpenRoute diagnoses <em>how</em> it's blocked and walks it
+             down a failover ladder automatically:</p>
+          <ul class="ladder">
+            <li><b>Secure DNS</b> — beats DNS tampering at full speed</li>
+            <li><b>ECH</b> — beats SNI/DPI filtering where the site supports it</li>
+            <li><b>Proxy / pool</b> — routes IP-blocked domains through a transport you add</li>
+            <li><b>Tor</b> — the free fallback when even a proxy IP is blocked</li>
+            <li><b>Read-only</b> — Wayback / reader view so you can still read the page</li>
+          </ul>
+          <p class="hint">Only blocked domains detour — everything else stays direct and full-speed.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="step">
+        <span class="num">3</span>
+        <div>
+          <h2>Want to beat IP blocks &amp; DPI? Add a transport</h2>
+          <p>For sites blocked at the IP level, OpenRoute needs somewhere unblocked to route through.
+             Point it at a proxy or Tor you already run, or install the <b>companion</b> for built-in
+             Shadowsocks-2022 / VLESS-Reality / Tor and a one-command self-host server.</p>
+          <p class="hint">Popup → <b>Transports</b>. Setup guide: <code>companion/README.md</code> · <code>server/README.md</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="reality">
+      <h3>An honest word</h3>
+      <p>No tool is truly unblockable — OpenRoute stacks independent fallback layers so that, in
+         practice, you almost always get through. It's censorship circumvention, <b>not anonymity</b>:
+         for anonymity use the Tor rung. Know your local laws before circumventing restrictions.</p>
+    </section>
+
+    <footer class="actions">
+      <button id="done" class="btn primary">Start browsing</button>
+      <span class="muted">You can reopen this from the extension's details page.</span>
+    </footer>
+  </main>
+  <script src="onboarding.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "name": "com.openroute.host",
+  "description": "OpenRoute native companion",
+  "path": "{{BIN_PATH}}",
+  "type": "stdio",
+  "allowed_extensions": [ "openroute@openroute.app" ]
+}

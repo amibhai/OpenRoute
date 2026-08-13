@@ -74,12 +74,29 @@ companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
 > + self-host scripts still to come; today OpenRoute fully unblocks DNS at full
 > speed and routes everything else through whatever proxy/Tor you point it at.
 
-## Install (Developer mode)
+## Install
 
-1. Open `chrome://extensions`
+**Chrome / Edge (developer mode):**
+1. Open `chrome://extensions` (or `edge://extensions`)
 2. Toggle **Developer mode** (top-right)
 3. Click **Load unpacked** and select this `openroute-extension` folder
-4. Pin the OpenRoute icon; the badge shows how many blocks were detected
+4. Pin the OpenRoute icon; a first-run guide opens, and the badge shows detected blocks
+
+**Packaged builds:** `powershell -File build.ps1` (Windows) or `./build.sh` (macOS/Linux)
+produces `dist/openroute-chrome-<ver>.zip` and `dist/openroute-firefox-<ver>.zip`,
+ready for the Chrome Web Store / Firefox AMO.
+
+### Browser support
+
+| Browser | Status | Proxy engine |
+|---|---|---|
+| Chrome | ✅ supported | `chrome.proxy` PAC |
+| Edge | ✅ supported (Chromium) | `chrome.proxy` PAC |
+| Firefox | 🧪 experimental | `proxy.onRequest` adapter — use `manifest.firefox.json` |
+
+The router auto-detects the engine, so the same code drives both. Firefox needs the
+companion's Firefox NM manifest (`allowed_extensions`, see `companion/host/`) and hasn't
+had a full end-to-end run yet.
 
 ## Try it
 
@@ -135,7 +152,9 @@ companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
   stands up a hardened sing-box VPS (Shadowsocks-2022 + VLESS-Reality) and prints
   the `ss://`/`vless://` links the companion consumes. Paste both into the pool box
   for multi-transport failover. Still to come: multi-region, one-click QR import.
-- **Phase E** — onboarding, cross-browser (Firefox/Edge), packaging, docs.
+- **Phase E (scaffolded)** — first-run onboarding wizard, real icons, Edge support +
+  experimental Firefox port (`manifest.firefox.json` + `proxy.onRequest` adapter), and
+  `build.ps1`/`build.sh` packaging into store-ready zips.
 
 ## Legality
 
