@@ -131,8 +131,10 @@ companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
   (`direct`/`obfs4`/`snowflake`, control-port bootstrap health) and **auto-rotating
   pools** (multiple upstreams wrapped in a sing-box `urltest` group). Popup gains
   a Tor-mode selector and a multi-link pool field.
-- **Phase D** — one-command self-host for a hardened VPS (sing-box + Reality),
-  multi-region failover, one-click share-link/QR import.
+- **Phase D (scaffolded)** — one-command self-host: [`server/install-server.sh`](server/install-server.sh)
+  stands up a hardened sing-box VPS (Shadowsocks-2022 + VLESS-Reality) and prints
+  the `ss://`/`vless://` links the companion consumes. Paste both into the pool box
+  for multi-transport failover. Still to come: multi-region, one-click QR import.
 - **Phase E** — onboarding, cross-browser (Firefox/Edge), packaging, docs.
 
 ## Legality
