@@ -1,8 +1,13 @@
 # OpenRoute — Unblock & Route
 
-A personal-use Chrome extension that detects when a site is blocked, works out
-**how** it's being blocked, and then walks that one domain down a **failover
+**A free, open-source browser extension.** It detects when a site is blocked, works
+out **how** it's being blocked, and then walks that one domain down a **failover
 ladder** until something gets it through — at full speed for everyone else.
+
+Works on **Chrome, Edge, Brave** (and experimentally Firefox). No account, no
+signup, no telemetry, no server required to get started.
+
+👉 **[Jump straight to install instructions](#install--3-minutes)**
 
 > **The honest headline:** nothing is "unblockable." Tor, every VPN, every proxy
 > gets blocked somewhere. OpenRoute's job is to **stack enough independent
@@ -64,27 +69,123 @@ deliver a page, OpenRoute automatically tries the next transport, then the next
 rung — with a hard attempt cap so it can never loop.
 
 **Transports** are anything the browser can reach: any SOCKS5/HTTP proxy you run
-(one-click preset for Tor Browser on `127.0.0.1:9150`). The upcoming native
-companion registers itself here to add built-in Shadowsocks-2022 / VLESS-Reality
-/ Tor / Snowflake without changing anything above the transport layer.
+(one-click preset for Tor Browser on `127.0.0.1:9150`). The optional
+[native companion](companion/) registers itself here to add Shadowsocks-2022 /
+VLESS-Reality / Tor / Snowflake without changing anything above the transport layer.
 
 > **Honest scope:** the extension alone can only *route to* a proxy — it can't
 > *be* one. Beating IP/DPI blocks needs somewhere unblocked to route through
-> (your VPS, Tor, a peer network). That transport layer is the native companion
-> + self-host scripts still to come; today OpenRoute fully unblocks DNS at full
-> speed and routes everything else through whatever proxy/Tor you point it at.
+> (your VPS, Tor, a peer network) — that's what the [companion](companion/) and
+> [self-host server](server/) provide. Out of the box, with no extra setup,
+> OpenRoute fully unblocks **DNS-based** blocking at full speed and routes
+> everything else through whatever proxy/Tor you point it at.
 
-## Install
+## Install — 3 minutes
 
-**Chrome / Edge (developer mode):**
-1. Open `chrome://extensions` (or `edge://extensions`)
-2. Toggle **Developer mode** (top-right)
-3. Click **Load unpacked** and select this `openroute-extension` folder
-4. Pin the OpenRoute icon; a first-run guide opens, and the badge shows detected blocks
+There's **nothing to compile** and no dependencies. The extension is plain
+JavaScript; you download the folder and load it. It is **not on the Chrome Web
+Store**, so you install it in developer mode — this is normal and takes 3 clicks.
 
-**Packaged builds:** `powershell -File build.ps1` (Windows) or `./build.sh` (macOS/Linux)
-produces `dist/openroute-chrome-<ver>.zip` and `dist/openroute-firefox-<ver>.zip`,
-ready for the Chrome Web Store / Firefox AMO.
+### Step 1 — Download the code
+
+**Option A — download the ZIP (easiest, no tools needed)**
+
+1. Go to **<https://github.com/amibhai/OpenRoute>**
+2. Click the green **`< > Code`** button → **Download ZIP**
+3. **Extract/unzip** the file somewhere permanent (e.g. `Documents\OpenRoute`)
+   — ⚠️ *don't* leave it inside the `.zip`, and don't delete this folder later:
+   the browser loads the extension from it every time it starts.
+
+**Option B — clone with git**
+
+```sh
+git clone https://github.com/amibhai/OpenRoute.git
+```
+
+You'll end up with a folder containing `manifest.json`, `background.js`, `popup.html`,
+and an `icons/` folder. **That folder is the extension.**
+
+### Step 2 — Load it into your browser
+
+<details open>
+<summary><b>Chrome, Edge, Brave, Opera (Chromium browsers)</b></summary>
+
+1. Open your browser and go to:
+   - Chrome → `chrome://extensions`
+   - Edge → `edge://extensions`
+   - Brave → `brave://extensions`
+2. Turn on **Developer mode** (toggle in the top-right corner; on Edge it's on the left)
+3. Click **Load unpacked**
+4. Select the folder from Step 1 — the one that **directly contains `manifest.json`**
+   (if you see a `manifest.json` inside when you open it, that's the right folder)
+5. Done. A welcome page opens automatically.
+
+**Pin it:** click the puzzle-piece 🧩 icon in the toolbar → pin **OpenRoute** so the
+badge is always visible.
+</details>
+
+<details>
+<summary><b>Firefox (experimental)</b></summary>
+
+Firefox needs its own manifest, so build the packaged version first:
+
+```sh
+./build.sh          # macOS / Linux  (needs `zip`)
+# or on Windows:
+powershell -ExecutionPolicy Bypass -File build.ps1
+```
+
+Then extract `dist/openroute-firefox-<version>.zip` and:
+
+1. Go to `about:debugging#/runtime/this-firefox`
+2. Click **Load Temporary Add-on…**
+3. Select the `manifest.json` inside the extracted folder
+
+⚠️ Temporary add-ons are removed when Firefox restarts. Firefox support is
+experimental and hasn't had a full end-to-end run — see the table below.
+</details>
+
+### Step 3 — Turn on Secure DNS (the actual fix for most blocks)
+
+The welcome page walks you through this, or do it manually:
+
+1. Open `chrome://settings/security`
+2. Turn on **Use secure DNS**
+3. Choose **Cloudflare (1.1.1.1)** or **Google**
+
+That single toggle defeats the most common form of blocking (DNS tampering) at
+**full speed**. Most people need nothing else.
+
+### Step 4 (optional) — Beat IP blocks and DPI
+
+If a site is blocked at the IP level, the extension needs somewhere unblocked to
+route through. Pick whichever fits you:
+
+| You have… | Do this |
+|---|---|
+| Tor Browser installed | Just run it — OpenRoute has a built-in preset for `127.0.0.1:9150` |
+| Any SOCKS5/HTTP proxy | Popup → **Transports** → add host + port |
+| A VPS (~$5/mo) | Run [`server/install-server.sh`](server/install-server.sh) on it, then install the [companion](companion/) and paste the link it prints |
+| Nothing, and you want free | Install the [companion](companion/) and use its built-in **Tor / Snowflake** mode |
+
+### Updating
+
+Pull the latest code, then click the **↻ reload** icon on the OpenRoute card at
+`chrome://extensions`:
+
+```sh
+git pull        # or download + extract the new ZIP over the old folder
+```
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| *"Manifest file is missing or unreadable"* | You selected the wrong folder. Pick the one that **directly** contains `manifest.json` (a ZIP often nests a second folder inside). |
+| Extension disappears after restart | On Chromium you probably deleted/moved the folder — it must stay put. On Firefox, temporary add-ons are removed by design. |
+| No icon in the toolbar | Click the 🧩 puzzle-piece and pin OpenRoute. |
+| Nothing gets detected | Detection only fires on **failed** page loads. Check **Detect** is on in the popup. |
+| A site still won't load | Open the popup and read the diagnosis — if it says *IP block*, you need Step 4. |
 
 ### Browser support
 
@@ -92,11 +193,19 @@ ready for the Chrome Web Store / Firefox AMO.
 |---|---|---|
 | Chrome | ✅ supported | `chrome.proxy` PAC |
 | Edge | ✅ supported (Chromium) | `chrome.proxy` PAC |
+| Brave / Opera / Vivaldi | ✅ should work (Chromium) | `chrome.proxy` PAC |
 | Firefox | 🧪 experimental | `proxy.onRequest` adapter — use `manifest.firefox.json` |
+| Safari | ❌ not supported | different extension platform |
 
 The router auto-detects the engine, so the same code drives both. Firefox needs the
 companion's Firefox NM manifest (`allowed_extensions`, see `companion/host/`) and hasn't
 had a full end-to-end run yet.
+
+### Building distributable zips
+
+`powershell -File build.ps1` (Windows) or `./build.sh` (macOS/Linux) produces
+`dist/openroute-chrome-<ver>.zip` and `dist/openroute-firefox-<ver>.zip`, ready for
+the Chrome Web Store / Firefox AMO.
 
 ## Try it
 
@@ -156,7 +265,60 @@ had a full end-to-end run yet.
   experimental Firefox port (`manifest.firefox.json` + `proxy.onRequest` adapter), and
   `build.ps1`/`build.sh` packaging into store-ready zips.
 
-## Legality
+## Contributing
 
-Circumventing censorship is legal in most places but restricted in a few.
-Know your jurisdiction. This is a personal-use tool.
+Issues and pull requests are welcome at
+**<https://github.com/amibhai/OpenRoute>**.
+
+Especially useful right now:
+
+- **Real-world reports** — what blocking you hit, what OpenRoute diagnosed, and
+  whether the ladder got you through. Diagnosis accuracy improves with real data.
+- **Firefox testing** — the port is written but unproven.
+- **End-to-end companion/server runs** on real hardware (see each README).
+
+If you're reporting a bug, please include your browser + version, what the popup
+diagnosed, and anything in the service-worker console
+(`chrome://extensions` → **service worker**).
+
+## Legality & responsible use
+
+Circumventing censorship is **legal in most countries** and is a recognised part
+of the right to access information — but a few jurisdictions restrict or ban it,
+and some networks (schools, employers) prohibit it by policy even where it's
+legal. **Know the rules that apply to you before using it**; that judgement is
+yours to make, and the risk is yours to carry.
+
+Please also understand what this tool is *not*:
+
+- **It is not anonymity.** A proxy or VPS you run is tied to you and your payment
+  method. If you need anonymity, use [Tor Browser](https://www.torproject.org/) —
+  which OpenRoute can also route through, but is not a substitute for.
+- **It is not a guarantee.** See the honest headline at the top: everything gets
+  blocked somewhere. OpenRoute stacks fallbacks; it doesn't work miracles.
+- **It is not for attacking anyone.** Use it to reach information, not to evade
+  security controls you're accountable to.
+
+If you're in a genuinely high-risk situation (a place where being caught
+circumventing carries real consequences), please rely on tools with formal
+security audits and a threat model built for that — Tor Browser, or the guidance
+at [accessnow.org/help](https://www.accessnow.org/help/). This project has not
+been independently audited.
+
+## License
+
+[MIT](LICENSE) — use it, fork it, modify it, ship it, commercially or otherwise.
+Just keep the copyright notice. No warranty.
+
+**Third-party components** are *not* bundled — the installers locate or fetch
+them, and they keep their own licenses:
+
+| Component | License | How it's used |
+|---|---|---|
+| [sing-box](https://github.com/SagerNet/sing-box) | GPL-3.0-or-later | run as a **separate process** by the companion |
+| [Tor](https://www.torproject.org/) + pluggable transports | BSD-3-Clause | run as a **separate process** by the companion |
+
+Running these as subprocesses doesn't make OpenRoute a derivative work, so the
+MIT license here stands. But if you **redistribute a bundle** that includes the
+sing-box binary, GPL-3.0 obligations attach to that bundle — ship it separately
+or comply. *(Not legal advice.)*

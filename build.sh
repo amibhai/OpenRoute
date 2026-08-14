@@ -10,7 +10,8 @@ echo "Building OpenRoute $VER"
 
 FILES=(background.js doh.js policy.js transports.js ladder.js router.js
        health.js nm-client.js popup.js onboarding.js
-       popup.html popup.css onboarding.html onboarding.css)
+       popup.html popup.css onboarding.html onboarding.css
+       LICENSE)
 
 command -v zip >/dev/null 2>&1 || { echo "need 'zip' (apt install zip / brew install zip)"; exit 1; }
 mkdir -p "$DIST"

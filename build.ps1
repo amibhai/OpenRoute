@@ -12,7 +12,8 @@ Write-Host "Building OpenRoute $ver"
 $files = @(
   "background.js","doh.js","policy.js","transports.js","ladder.js","router.js",
   "health.js","nm-client.js","popup.js","onboarding.js",
-  "popup.html","popup.css","onboarding.html","onboarding.css"
+  "popup.html","popup.css","onboarding.html","onboarding.css",
+  "LICENSE"
 )
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null

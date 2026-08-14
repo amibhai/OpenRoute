@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "OpenRoute — Unblock & Route",
   "version": "0.3.0",
-  "description": "Detects blocked sites, diagnoses how they're blocked, and auto-routes only those domains down a failover ladder (Secure DNS → proxy → Tor) at full speed. Personal use.",
+  "description": "Detects blocked sites, diagnoses how they're blocked, and auto-routes only those domains down a failover ladder (Secure DNS → proxy → Tor) at full speed. Free and open source.",
   "minimum_chrome_version": "108",
   "permissions": [
     "webNavigation",
