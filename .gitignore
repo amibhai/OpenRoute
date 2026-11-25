@@ -25,3 +25,10 @@ openroute-host.exe
 
 # Packaged extension zips
 dist/
+
+# Dev tooling (downloaded toolchains, npm, test output)
+.tools/
+node_modules/
+test-results/
+coverage/
+.e2e-profile*/
