@@ -2,347 +2,317 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	socksPort   = 1080          // local SOCKS/HTTP the browser is pointed at
-	clashAddr   = "127.0.0.1:9090" // sing-box Clash API, used for health/latency
-	upstreamTag = "proxy"       // outbound tag for the user's transport
-)
-
-// Manager owns a *detached* sing-box process plus the known/active profiles.
+// sing-box orchestration (minimum 1.12; the config uses the 1.12+ schema:
+// rule actions, typed DNS servers, default_domain_resolver — verified with
+// `sing-box check` on 1.12.x and 1.14.x in the test suite).
 //
-// Native-messaging hosts are short-lived: Chrome starts a fresh copy of us per
-// request and closes it after the reply. So sing-box must outlive us — we start
-// it detached, track it by PID file, and persist which profile is active to
-// disk, so any later invocation can inspect or tear it down.
-type Manager struct {
-	dir        string
-	binPath    string
-	cfgPath    string
-	profPath   string
-	pidPath    string
-	activePath string
+// One sing-box process serves up to three local inbounds:
+//   pool-in      → a server or an auto-rotating pool (urltest) from share links
+//   dpi-record   → direct, TLS ClientHello split across TLS records
+//   dpi-segment  → direct, TLS ClientHello split across TCP segments
+// The two DPI-bypass inbounds need no server at all; they defeat simple
+// SNI filters (sing-box's own docs: not a cure for sophisticated DPI). They
+// are separate transports so the extension's ladder can try one, then the
+// other, then a real tunnel.
 
-	mu       sync.Mutex
-	profiles []Profile
-	activeID string
+const minSingBox = "1.12.0"
 
-	tor *Tor // free-network engine (Phase C), managed independently
+type SingBox struct {
+	dir     string
+	bin     string
+	version string
+	cfgPath string
+	logPath string
+	child   *Child
+	mu      sync.Mutex
+	lastErr string
 }
 
-func NewManager(dir string) *Manager {
-	m := &Manager{
-		dir:        dir,
-		cfgPath:    filepath.Join(dir, "singbox.json"),
-		profPath:   filepath.Join(dir, "profiles.json"),
-		pidPath:    filepath.Join(dir, "singbox.pid"),
-		activePath: filepath.Join(dir, "active.txt"),
+func newSingBox(dir string, reg *ChildRegistry) *SingBox {
+	s := &SingBox{
+		dir:     dir,
+		cfgPath: filepath.Join(dir, "singbox.json"),
+		logPath: filepath.Join(dir, "singbox.log"),
 	}
-	m.binPath = findSingBox(dir)
-	m.profiles = loadProfiles(m.profPath)
-	if b, err := os.ReadFile(m.activePath); err == nil {
-		m.activeID = strings.TrimSpace(string(b))
-	}
-	m.tor = NewTor(dir)
-	return m
+	s.child = &Child{Name: "sing-box", Dir: dir, Log: filepath.Join(dir, "singbox.out.log"), reg: reg}
+	s.detect()
+	return s
 }
 
-// disconnect stops one engine ("singbox"/"tor") or, by default, both.
-func (m *Manager) disconnect(kind string) map[string]any {
-	switch kind {
-	case "tor":
-		return m.tor.Disconnect()
-	case "singbox", "companion":
-		return m.Disconnect()
-	default:
-		m.Disconnect()
-		m.tor.Disconnect()
-		return map[string]any{"ok": true}
+func (s *SingBox) detect() {
+	s.bin = findBinary(s.dir, "OPENROUTE_SINGBOX", []string{"sing-box"}, nil)
+	s.version = ""
+	if s.bin != "" {
+		s.version, _ = singBoxVersion(s.bin)
 	}
 }
 
-func singBoxName() string {
-	if runtime.GOOS == "windows" {
-		return "sing-box.exe"
+var reSBVersion = regexp.MustCompile(`sing-box version (\d+\.\d+\.\d+)`)
+
+func singBoxVersion(bin string) (string, error) {
+	out, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		return "", err
 	}
-	return "sing-box"
+	m := reSBVersion.FindStringSubmatch(string(out))
+	if m == nil {
+		return "", errors.New("unrecognised `sing-box version` output")
+	}
+	return m[1], nil
 }
 
-// findSingBox looks next to the data dir, next to our own binary, then on PATH.
-func findSingBox(dir string) string {
-	name := singBoxName()
-	if p := filepath.Join(dir, name); fileExists(p) {
-		return p
-	}
-	if exe, err := os.Executable(); err == nil {
-		if p := filepath.Join(filepath.Dir(exe), name); fileExists(p) {
-			return p
+func versionAtLeast(v, min string) bool {
+	a, b := strings.Split(v, "."), strings.Split(min, ".")
+	for i := 0; i < 3; i++ {
+		x, _ := strconv.Atoi(at(a, i))
+		y, _ := strconv.Atoi(at(b, i))
+		if x != y {
+			return x > y
 		}
 	}
-	if p, err := exec.LookPath(name); err == nil {
-		return p
-	}
-	return ""
+	return true
 }
 
-// Connect parses one or more share links into sing-box outbounds, writes the
-// config, and (re)starts a detached sing-box so the browser can route through
-// 127.0.0.1. Multiple links become a health-checked urltest pool that auto-picks
-// the fastest working node and rotates as they come and go.
-func (m *Manager) Connect(id, label string, links []string) map[string]any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if len(links) == 0 {
-		return errResp("no link(s) provided")
+func at(s []string, i int) string {
+	if i < len(s) {
+		return s[i]
 	}
-	outbounds := make([]map[string]any, 0, len(links))
-	for _, ln := range links {
-		ob, err := linkToOutbound(ln)
-		if err != nil {
-			return errResp("parse link: " + err.Error())
+	return "0"
+}
+
+func (s *SingBox) Info() map[string]any {
+	return map[string]any{"path": s.bin, "version": s.version, "ok": s.bin != "" && versionAtLeast(s.version, minSingBox)}
+}
+
+// buildSingBoxConfig assembles the config for the desired state. doh is the
+// IP of a reachable DoH resolver ("" → the system resolver).
+func buildSingBoxConfig(st *State, pool []Parsed, doh string, logPath string) map[string]any {
+	inbounds := []any{}
+	outbounds := []any{}
+	endpoints := []any{}
+	rules := []any{
+		map[string]any{"action": "sniff"},
+		map[string]any{"protocol": "dns", "action": "hijack-dns"},
+	}
+	if len(pool) > 0 {
+		inbounds = append(inbounds, map[string]any{"type": "mixed", "tag": "pool-in", "listen": "127.0.0.1", "listen_port": st.Ports.Pool})
+		var tags []string
+		for i, p := range pool {
+			obj := cloneMap(p.Object)
+			tag := fmt.Sprintf("up-%d", i)
+			obj["tag"] = tag
+			if p.Endpoint {
+				endpoints = append(endpoints, obj)
+			} else {
+				outbounds = append(outbounds, obj)
+			}
+			tags = append(tags, tag)
 		}
-		outbounds = append(outbounds, ob)
-	}
-	if id == "" {
-		id = "companion"
-	}
-	if label == "" {
-		label = "Companion"
-	}
-
-	if err := m.writeConfig(outbounds); err != nil {
-		return errResp("write config: " + err.Error())
-	}
-	if err := m.startLocked(); err != nil {
-		return errResp(err.Error())
-	}
-
-	m.setActiveLocked(id)
-	m.upsertProfileLocked(Profile{ID: id, Label: label, Link: strings.Join(links, "\n")})
-	return map[string]any{"ok": true, "socksPort": socksPort, "id": id, "count": len(links)}
-}
-
-func (m *Manager) Disconnect() map[string]any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stopLocked()
-	m.setActiveLocked("")
-	return map[string]any{"ok": true}
-}
-
-func (m *Manager) Status() map[string]any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return map[string]any{
-		"ok":         true,
-		"running":    m.clashUp(),
-		"socksPort":  socksPort,
-		"activeId":   m.activeID,
-		"singboxOk":  m.binPath != "",
-		"singboxBin": m.binPath,
-		"version":    version,
-	}
-}
-
-// Transports reports known profiles as extension-shaped transports, all pointing
-// at the single local SOCKS port (only the active one is live).
-func (m *Manager) Transports() []map[string]any {
-	m.mu.Lock()
-	profs := append([]Profile(nil), m.profiles...)
-	activeID := m.activeID
-	m.mu.Unlock()
-
-	liveHealth, liveLat := "unknown", 0
-	if activeID != "" {
-		liveHealth, liveLat = m.probe()
-	}
-
-	out := make([]map[string]any, 0, len(profs))
-	for _, p := range profs {
-		health, lat := "unknown", 0
-		if p.ID == activeID {
-			health, lat = liveHealth, liveLat
-		}
-		out = append(out, map[string]any{
-			"id": p.ID, "label": p.Label, "scheme": "socks5",
-			"host": "127.0.0.1", "port": socksPort, "kind": "companion",
-			"health": health, "latencyMs": lat, "builtin": false,
+		// urltest: picks the lowest-latency working member and re-tests, so a
+		// pool self-heals; the same machinery serves a single server.
+		outbounds = append(outbounds, map[string]any{
+			"type": "urltest", "tag": "pool", "outbounds": tags,
+			"url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50,
 		})
+		rules = append(rules, map[string]any{"inbound": []string{"pool-in"}, "action": "route", "outbound": "pool"})
 	}
+	if st.DPI {
+		inbounds = append(inbounds,
+			map[string]any{"type": "mixed", "tag": "dpi-record", "listen": "127.0.0.1", "listen_port": st.Ports.DPIRecord},
+			map[string]any{"type": "mixed", "tag": "dpi-segment", "listen": "127.0.0.1", "listen_port": st.Ports.DPISegment})
+		rules = append(rules,
+			map[string]any{"inbound": []string{"dpi-record"}, "protocol": "tls", "action": "route-options", "tls_record_fragment": true},
+			map[string]any{"inbound": []string{"dpi-segment"}, "protocol": "tls", "action": "route-options", "tls_fragment": true},
+			map[string]any{"inbound": []string{"dpi-record", "dpi-segment"}, "action": "route", "outbound": "direct"})
+	}
+	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "direct"})
+
+	// Domain names reaching sing-box (the browser sends hostnames over
+	// SOCKS5) are resolved over DoH, never the possibly-tampered system
+	// resolver — unless no DoH resolver is reachable at all.
+	resolver := map[string]any{"type": "local", "tag": "resolver"}
+	if doh != "" {
+		resolver = map[string]any{"type": "https", "tag": "resolver", "server": doh}
+	}
+	cfg := map[string]any{
+		"log":       map[string]any{"level": "warn", "output": logPath, "timestamp": true},
+		"dns":       map[string]any{"servers": []any{resolver}, "final": "resolver"},
+		"inbounds":  inbounds,
+		"outbounds": outbounds,
+		"route": map[string]any{
+			"rules": rules, "final": "direct", "auto_detect_interface": true,
+			"default_domain_resolver": "resolver",
+		},
+		"experimental": map[string]any{"clash_api": map[string]any{
+			"external_controller": fmt.Sprintf("127.0.0.1:%d", st.Ports.Clash), "secret": st.Secret,
+		}},
+	}
+	if len(endpoints) > 0 {
+		cfg["endpoints"] = endpoints
+	}
+	return cfg
+}
+
+func cloneMap(m map[string]any) map[string]any {
+	b, _ := json.Marshal(m)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
 	return out
 }
 
-// Health is the compact view the extension's health tick folds in.
-func (m *Manager) Health() []map[string]any {
-	m.mu.Lock()
-	activeID := m.activeID
-	m.mu.Unlock()
-	if activeID == "" {
-		return []map[string]any{}
+// Apply makes the running sing-box match st. Errors carry the reason
+// (`sing-box check` output or the log tail), never secrets.
+func (s *SingBox) Apply(st *State, doh string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st.Profile == nil && !st.DPI {
+		s.child.Stop()
+		s.lastErr = ""
+		return nil
 	}
-	health, lat := m.probe()
-	return []map[string]any{{"id": activeID, "health": health, "latencyMs": lat}}
-}
-
-// ---- internals (callers hold m.mu) -----------------------------------------
-
-func (m *Manager) writeConfig(outbounds []map[string]any) error {
-	// Tag each upstream and wrap them in a urltest group, so a pool of upstreams
-	// auto-selects the lowest-latency working one and re-tests periodically —
-	// free health-checked rotation, and identical machinery for one or many.
-	tags := make([]string, 0, len(outbounds))
-	outs := make([]any, 0, len(outbounds)+2)
-	for i, ob := range outbounds {
-		tag := fmt.Sprintf("up-%d", i)
-		ob["tag"] = tag
-		tags = append(tags, tag)
-		outs = append(outs, ob)
+	if s.bin == "" {
+		s.detect()
 	}
-	outs = append(outs, map[string]any{
-		"type": "urltest", "tag": upstreamTag, "outbounds": tags,
-		"url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50,
-	})
-	outs = append(outs, map[string]any{"type": "direct", "tag": "direct"})
-
-	cfg := map[string]any{
-		"log": map[string]any{
-			"level": "warn", "output": filepath.Join(m.dir, "singbox.log"), "timestamp": true,
-		},
-		"experimental": map[string]any{
-			"clash_api": map[string]any{"external_controller": clashAddr},
-		},
-		// DNS over DoH *through the upstream* — closes the gap that an extension
-		// can't force Chrome's Secure DNS. Bootstrap is an IP literal, so no
-		// plaintext lookup is needed to reach the resolver.
-		"dns": map[string]any{
-			"servers": []any{
-				map[string]any{"tag": "doh", "address": "https://1.1.1.1/dns-query", "detour": upstreamTag},
-			},
-			"final":    "doh",
-			"strategy": "prefer_ipv4",
-		},
-		"inbounds": []any{
-			map[string]any{
-				"type": "mixed", "tag": "in", "listen": "127.0.0.1",
-				"listen_port": socksPort, "sniff": true,
-			},
-		},
-		"outbounds": outs,
-		"route":     map[string]any{"final": upstreamTag, "auto_detect_interface": true},
+	if s.bin == "" {
+		return s.fail(fmt.Errorf("sing-box not found — install it (1.12+) or put it in %s", s.dir))
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
+	if !versionAtLeast(s.version, minSingBox) {
+		return s.fail(fmt.Errorf("sing-box %s is too old (need %s+)", s.version, minSingBox))
 	}
-	return os.WriteFile(m.cfgPath, b, 0o600)
-}
-
-func (m *Manager) startLocked() error {
-	m.stopLocked() // never leave two instances fighting over the port
-	if m.binPath == "" {
-		return fmt.Errorf("sing-box not found — install it or drop it in %s", m.dir)
-	}
-	cmd := exec.Command(m.binPath, "run", "-c", m.cfgPath)
-	cmd.SysProcAttr = detachAttr() // survive this short-lived host process
-	// stdin/stdout/stderr left nil → connected to the null device, so sing-box
-	// can never write into our native-messaging stdout channel.
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start sing-box: %w", err)
-	}
-	_ = os.WriteFile(m.pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
-	_ = cmd.Process.Release() // detach: don't wait/reap, let it run on
-
-	// Best-effort wait for the Clash API to answer before we report success.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if m.clashUp() {
-			break
+	var pool []Parsed
+	if st.Profile != nil {
+		for _, l := range st.Profile.Links {
+			p, err := parseLink(l)
+			if err != nil {
+				return s.fail(fmt.Errorf("%s: %w", redactLink(l), err))
+			}
+			pool = append(pool, p)
 		}
-		time.Sleep(150 * time.Millisecond)
 	}
+	ports := []*int{&st.Ports.Clash}
+	if len(pool) > 0 {
+		ports = append(ports, &st.Ports.Pool)
+	}
+	if st.DPI {
+		ports = append(ports, &st.Ports.DPIRecord, &st.Ports.DPISegment)
+	}
+	s.child.Stop() // free our own ports before checking them
+	st.ensurePorts(ports...)
+
+	b, _ := json.MarshalIndent(buildSingBoxConfig(st, pool, doh, s.logPath), "", "  ")
+	if err := os.WriteFile(s.cfgPath, b, 0o600); err != nil {
+		return s.fail(err)
+	}
+	if out, err := exec.Command(s.bin, "check", "-c", s.cfgPath).CombinedOutput(); err != nil {
+		return s.fail(fmt.Errorf("sing-box rejected the config: %s", redact(strings.TrimSpace(stripANSI(string(out))))))
+	}
+	s.child.Bin = s.bin
+	s.child.Args = []string{"run", "-c", s.cfgPath}
+	if err := s.child.Start(); err != nil {
+		return s.fail(err)
+	}
+	var listen []int
+	for _, p := range ports {
+		listen = append(listen, *p)
+	}
+	if err := waitListening(listen, 8*time.Second); err != nil {
+		s.child.Stop()
+		return s.fail(fmt.Errorf("sing-box didn't come up: %v; %s", err, tailFile(s.logPath, 3)))
+	}
+	s.lastErr = ""
 	return nil
 }
 
-func (m *Manager) stopLocked() {
-	b, err := os.ReadFile(m.pidPath)
-	if err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 {
-			if proc, err := os.FindProcess(pid); err == nil {
-				_ = proc.Kill()
-			}
-		}
-	}
-	_ = os.Remove(m.pidPath)
+func (s *SingBox) fail(err error) error {
+	s.lastErr = redact(err.Error())
+	return errors.New(s.lastErr)
 }
 
-func (m *Manager) setActiveLocked(id string) {
-	m.activeID = id
-	if id == "" {
-		_ = os.Remove(m.activePath)
-		return
+func (s *SingBox) Status() map[string]any {
+	st := s.child.Status()
+	st["binary"] = s.Info()
+	if s.lastErr != "" {
+		st["error"] = s.lastErr
 	}
-	_ = os.WriteFile(m.activePath, []byte(id), 0o600)
+	return st
 }
 
-func (m *Manager) upsertProfileLocked(p Profile) {
-	for i := range m.profiles {
-		if m.profiles[i].ID == p.ID {
-			m.profiles[i] = p
-			_ = saveProfiles(m.profPath, m.profiles)
-			return
-		}
+// PoolHealth asks sing-box (Clash API, secret-protected) to measure the pool.
+func (s *SingBox) PoolHealth(st *State) (string, int) {
+	if !s.child.Running() || st.Profile == nil {
+		return "down", 0
 	}
-	m.profiles = append(m.profiles, p)
-	_ = saveProfiles(m.profPath, m.profiles)
-}
-
-func (m *Manager) clashUp() bool {
-	c := &http.Client{Timeout: time.Second}
-	resp, err := c.Get("http://" + clashAddr + "/version")
-	if err != nil {
-		return false
-	}
-	_ = resp.Body.Close()
-	return resp.StatusCode == 200
-}
-
-// probe measures upstream reachability/latency via the Clash API delay test.
-func (m *Manager) probe() (string, int) {
-	target := url.QueryEscape("http://www.gstatic.com/generate_204")
-	u := fmt.Sprintf("http://%s/proxies/%s/delay?timeout=3000&url=%s", clashAddr, upstreamTag, target)
-	c := &http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get(u)
+	target := url.QueryEscape("https://www.gstatic.com/generate_204")
+	req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d/proxies/pool/delay?timeout=5000&url=%s", st.Ports.Clash, target), nil)
+	req.Header.Set("Authorization", "Bearer "+st.Secret)
+	resp, err := (&http.Client{Timeout: 7 * time.Second}).Do(req)
 	if err != nil {
 		return "down", 0
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "down", 0
-	}
 	var r struct {
 		Delay int `json:"delay"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return "degraded", 0
-	}
-	if r.Delay <= 0 {
+	if resp.StatusCode != 200 || json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&r) != nil || r.Delay <= 0 {
 		return "down", 0
 	}
 	if r.Delay > 1500 {
 		return "degraded", r.Delay
 	}
 	return "up", r.Delay
+}
+
+// ---- DoH reachability for sing-box's own resolver ----------------------------
+
+// RFC 8484 §4.1 query for example.com A, as raw bytes.
+var probeQuery = []byte{0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 3, 'c', 'o', 'm', 0, 0, 1, 0, 1}
+
+var dohCache struct {
+	sync.Mutex
+	ip string
+	at time.Time
+}
+
+// pickDoH returns the first DoH resolver (by IP literal) that answers right
+// now, or "" when none does (then sing-box falls back to the system resolver).
+func pickDoH() string {
+	dohCache.Lock()
+	defer dohCache.Unlock()
+	if time.Since(dohCache.at) < 10*time.Minute && !dohCache.at.IsZero() {
+		return dohCache.ip
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	dohCache.ip = ""
+	for _, ip := range []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "1.0.0.1", "8.8.4.4"} {
+		req, _ := http.NewRequest("POST", "https://"+ip+"/dns-query", strings.NewReader(string(probeQuery)))
+		req.Header.Set("content-type", "application/dns-message")
+		req.Header.Set("accept", "application/dns-message")
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if resp.StatusCode == 200 && len(body) > 12 && body[3]&0x0f == 0 && (int(body[6])<<8|int(body[7])) > 0 {
+			dohCache.ip = ip
+			break
+		}
+	}
+	dohCache.at = time.Now()
+	return dohCache.ip
 }

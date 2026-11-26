@@ -210,11 +210,36 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
       return { result };
     },
 
+    // Serverless DPI bypass (TLS ClientHello fragmentation) — two transports,
+    // so the ladder can try records, then segments, then a real tunnel.
+    async companionConnectDpi() {
+      companion.invalidate();
+      const result = await companion.send({ cmd: "connectDpi" }, 45000);
+      if (result?.ok) {
+        for (const t of result.transports || []) {
+          await transports.upsert({ id: t.id, label: t.label, scheme: "socks5", host: "127.0.0.1", port: Number(t.port), kind: "companion", note: t.note });
+        }
+        await router.apply();
+        for (const t of result.transports || []) await ctx.verifyTransport?.(t.id, { timeout: 5000 });
+        await ladder.retryDue({ force: true });
+      }
+      return { result };
+    },
+
+    async companionNewIdentity() {
+      return { result: await companion.send({ cmd: "newIdentity" }) };
+    },
+
+    async companionRefreshBridges({ viaSocks } = {}) {
+      return { result: await companion.send({ cmd: "refreshBridges", viaSocks: Number(viaSocks) || 0 }, 45000) };
+    },
+
     async companionDisconnect({ kind } = {}) {
       let result;
       try { result = await companion.send({ cmd: "disconnect", kind: kind || "" }); }
       catch (e) { result = { ok: false, error: String(e?.message || e) }; }
-      const ids = kind === "tor" ? ["companion-tor"] : kind === "singbox" ? ["companion"] : ["companion", "companion-tor"];
+      const dpi = ["companion-dpi-record", "companion-dpi-segment"];
+      const ids = kind === "tor" ? ["companion-tor"] : kind === "singbox" ? ["companion"] : kind === "dpi" ? dpi : ["companion", "companion-tor", ...dpi];
       for (const id of ids) {
         if (await transports.get(id)) {
           await transports.remove(id);

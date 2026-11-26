@@ -2,11 +2,18 @@ package main
 
 import (
 	"bufio"
+	_ "embed"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -14,256 +21,486 @@ import (
 	"time"
 )
 
-const (
-	torSocksPort = 9250 // separate from Tor Browser's 9150 so both can coexist
-	torCtrlPort  = 9251
-)
+// Tor: the free, serverless rung. A supervised `tor` with
+//   * cookie-authenticated control port (never unauthenticated),
+//   * a SOCKS port chosen free once and kept,
+//   * pluggable transports + built-in bridges taken from Tor's own
+//     pt_config.json (today's bundles run Snowflake through lyrebird), with a
+//     bundled snapshot and an optional fresh Moat fetch as fallbacks,
+//   * relative PT paths, so spaces in Windows paths can't break `exec`,
+//   * an "auto" mode that tries direct → obfs4 → snowflake → meek until one
+//     bootstraps (like Tor Browser's Connection Assist).
 
-// Defaults as shipped by Tor Browser. These can drift over time — the extension
-// can override the snowflake args / bridge lines if needed.
-const snowflakePTArgs = "-url https://1098762253.rsc.cdn77.org/ -front foursquare.com -ice stun:stun.l.google.com:19302,stun:stun.antisip.com:3478 -max 1"
-const snowflakeBridge = "snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72"
+//go:embed assets/pt_config.json
+var builtinPTConfig []byte
 
-// Tor manages a detached `tor` subprocess with an optional pluggable transport
-// (obfs4 or snowflake) for when Tor itself is blocked. It's a free, no-server
-// rung of the ladder.
+type PTConfig struct {
+	RecommendedDefault  string              `json:"recommendedDefault"`
+	PluggableTransports map[string]string   `json:"pluggableTransports"`
+	Bridges             map[string][]string `json:"bridges"`
+}
+
+var TorModes = []string{"direct", "obfs4", "snowflake", "meek", "webtunnel", "auto"}
+
 type Tor struct {
-	binPath       string
-	obfs4Path     string
-	snowflakePath string
-	dir           string
-	torrcPath     string
-	pidPath       string
-	dataDir       string
+	dir      string
+	bin      string
+	ptDir    string
+	pt       *PTConfig
+	ptSource string
 
-	mu     sync.Mutex
-	active bool
-	mode   string
-	label  string
+	torrc    string
+	dataDir  string
+	portFile string
+	logPath  string
+	child    *Child
+
+	mu       sync.Mutex
+	mode     string // the mode actually running ("auto" resolves to one of the others)
+	autoNote string
+	lastErr  string
 }
 
-func NewTor(dir string) *Tor {
-	return &Tor{
-		dir:           dir,
-		torrcPath:     filepath.Join(dir, "torrc"),
-		pidPath:       filepath.Join(dir, "tor.pid"),
-		dataDir:       filepath.Join(dir, "tor-data"),
-		binPath:       firstExec(dir, "tor"),
-		obfs4Path:     firstExec(dir, "lyrebird", "obfs4proxy"),
-		snowflakePath: firstExec(dir, "snowflake-client", "snowflake"),
+func newTor(dir string, reg *ChildRegistry) *Tor {
+	t := &Tor{
+		dir:      dir,
+		torrc:    filepath.Join(dir, "torrc"),
+		dataDir:  filepath.Join(dir, "tor-data"),
+		portFile: filepath.Join(dir, "tor-control-port"),
+		logPath:  filepath.Join(dir, "tor.log"),
 	}
+	t.child = &Child{Name: "tor", Log: filepath.Join(dir, "tor.out.log"), reg: reg}
+	t.detect()
+	return t
 }
 
-func exeName(n string) string {
-	if runtime.GOOS == "windows" {
-		return n + ".exe"
-	}
-	return n
-}
-
-// firstExec returns the first of names found next to the data dir or on PATH.
-func firstExec(dir string, names ...string) string {
-	for _, n := range names {
-		nn := exeName(n)
-		if p := filepath.Join(dir, nn); fileExists(p) {
-			return p
+func torBrowserCandidates() []string {
+	home, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "windows":
+		var out []string
+		for _, base := range []string{filepath.Join(home, "Desktop"), filepath.Join(home, "OneDrive", "Desktop"), os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles")} {
+			if base != "" {
+				out = append(out, filepath.Join(base, "Tor Browser", "Browser", "TorBrowser", "Tor", "tor.exe"))
+			}
 		}
-		if p, err := exec.LookPath(nn); err == nil {
-			return p
+		return out
+	case "darwin":
+		return []string{"/Applications/Tor Browser.app/Contents/MacOS/Tor/tor", filepath.Join(home, "Applications", "Tor Browser.app", "Contents", "MacOS", "Tor", "tor")}
+	default:
+		return []string{filepath.Join(home, "tor-browser", "Browser", "TorBrowser", "Tor", "tor"),
+			filepath.Join(home, ".local", "share", "torbrowser", "tbb", "x86_64", "tor-browser", "Browser", "TorBrowser", "Tor", "tor"),
+			"/usr/bin/tor", "/usr/local/bin/tor", "/opt/homebrew/bin/tor"}
+	}
+}
+
+func (t *Tor) detect() {
+	t.bin = findBinary(t.dir, "OPENROUTE_TOR", []string{"tor"}, torBrowserCandidates())
+	t.ptDir, t.pt, t.ptSource = "", nil, ""
+	if t.bin == "" {
+		return
+	}
+	torDir := filepath.Dir(t.bin)
+	for _, d := range []string{
+		filepath.Join(torDir, "pluggable_transports"), // Tor Expert Bundle
+		filepath.Join(torDir, "PluggableTransports"),  // Tor Browser
+		torDir,
+	} {
+		if fileExists(filepath.Join(d, exeName("lyrebird"))) || fileExists(filepath.Join(d, exeName("obfs4proxy"))) || fileExists(filepath.Join(d, exeName("snowflake-client"))) {
+			t.ptDir = d
+			break
 		}
 	}
-	return ""
+	if t.ptDir != "" {
+		if b, err := os.ReadFile(filepath.Join(t.ptDir, "pt_config.json")); err == nil {
+			var c PTConfig
+			if json.Unmarshal(b, &c) == nil && len(c.PluggableTransports) > 0 {
+				t.pt, t.ptSource = &c, "installed pt_config.json"
+			}
+		}
+	}
+	if t.pt == nil {
+		t.pt = loadCachedOrBuiltinPT(t.dir)
+		t.ptSource = "bundled snapshot"
+		if fileExists(filepath.Join(t.dir, "bridges.json")) {
+			t.ptSource = "Moat cache"
+		}
+	}
 }
 
-// Connect writes a torrc for the chosen mode and (re)starts a detached tor.
-func (t *Tor) Connect(mode, label string, bridges []string) map[string]any {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if mode == "" {
-		mode = "direct"
+func loadCachedOrBuiltinPT(dir string) *PTConfig {
+	var c PTConfig
+	_ = json.Unmarshal(builtinPTConfig, &c)
+	if b, err := os.ReadFile(filepath.Join(dir, "bridges.json")); err == nil {
+		var fresh map[string][]string
+		if json.Unmarshal(b, &fresh) == nil && len(fresh) > 0 {
+			c.Bridges = fresh
+		}
 	}
-	if label == "" {
-		label = "Tor (" + mode + ")"
-	}
-	if t.binPath == "" {
-		return errResp("tor binary not found — install Tor or drop it in " + t.dir)
-	}
-	if err := t.writeTorrc(mode, bridges); err != nil {
-		return errResp(err.Error())
-	}
-	if err := t.startLocked(); err != nil {
-		return errResp(err.Error())
-	}
-	t.active, t.mode, t.label = true, mode, label
-	return map[string]any{"ok": true, "socksPort": torSocksPort, "id": "companion-tor", "mode": mode}
+	return &c
 }
 
-func (t *Tor) Disconnect() map[string]any {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.stopLocked()
-	t.active = false
-	return map[string]any{"ok": true}
+// torQuote quotes a torrc value (Tor parses C-style escapes inside quotes).
+func torQuote(p string) string {
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(p, `\`, `\\`), `"`, `\"`) + `"`
 }
 
-func (t *Tor) Transports() []map[string]any {
-	t.mu.Lock()
-	active, mode, label := t.active, t.mode, t.label
-	t.mu.Unlock()
-	if !active {
-		return []map[string]any{}
+// pluginLine renders a pt_config plugin line with a PT path relative to tor's
+// working directory (no spaces), adding .exe on Windows.
+func (t *Tor) pluginLine(key string) (string, error) {
+	tmpl, ok := t.pt.PluggableTransports[key]
+	if !ok {
+		return "", fmt.Errorf("no %s plugin line in %s", key, t.ptSource)
 	}
-	health, boot := t.healthLocked()
-	return []map[string]any{{
-		"id": "companion-tor", "label": label, "scheme": "socks5",
-		"host": "127.0.0.1", "port": torSocksPort, "kind": "companion",
-		"health": health, "latencyMs": 0, "builtin": false,
-		"mode": mode, "bootstrap": boot,
-	}}
-}
-
-func (t *Tor) Health() []map[string]any {
-	t.mu.Lock()
-	active := t.active
-	t.mu.Unlock()
-	if !active {
-		return []map[string]any{}
+	if t.ptDir == "" {
+		return "", errors.New("no pluggable-transport binaries found next to tor (lyrebird/snowflake-client)")
 	}
-	health, boot := t.healthLocked()
-	return []map[string]any{{"id": "companion-tor", "health": health, "latencyMs": 0, "bootstrap": boot}}
-}
-
-// ---- internals -------------------------------------------------------------
-
-func (t *Tor) healthLocked() (string, int) {
-	p, err := t.bootstrap()
+	rel, err := filepath.Rel(filepath.Dir(t.bin), t.ptDir)
 	if err != nil {
+		rel = t.ptDir
+	}
+	prefix := ""
+	if rel != "." {
+		prefix = rel + string(filepath.Separator)
+	}
+	line := strings.ReplaceAll(tmpl, "${pt_path}", prefix)
+	// Binary names: the snapshot is platform-neutral; installed configs already match.
+	re := regexp.MustCompile(`exec (\S+)`)
+	line = re.ReplaceAllStringFunc(line, func(m string) string {
+		bin := strings.TrimPrefix(m, "exec ")
+		if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(bin), ".exe") {
+			bin += ".exe"
+		}
+		return "exec " + bin
+	})
+	if strings.Contains(prefix, " ") {
+		return "", fmt.Errorf("the pluggable-transport folder path contains spaces (%s); move tor to a path without spaces", t.ptDir)
+	}
+	return line, nil
+}
+
+func (t *Tor) transportsFor(mode string, user []string) ([]string, []string, error) {
+	var bridges []string
+	for _, b := range user {
+		if b = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(b), "Bridge ")); b != "" {
+			bridges = append(bridges, b)
+		}
+	}
+	var plugin string
+	var err error
+	switch mode {
+	case "obfs4", "meek", "webtunnel":
+		plugin, err = t.pluginLine("lyrebird")
+	case "snowflake":
+		plugin, err = t.pluginLine("snowflake")
+	default:
+		return nil, nil, fmt.Errorf("unknown tor mode %q", mode)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(bridges) == 0 {
+		bridges = t.pt.Bridges[mode]
+	}
+	if len(bridges) == 0 && mode == "meek" {
+		bridges = t.pt.Bridges["meek-azure"]
+	}
+	if len(bridges) == 0 {
+		if mode == "webtunnel" {
+			return nil, nil, errors.New("webtunnel needs bridge lines — get them at bridges.torproject.org")
+		}
+		return nil, nil, fmt.Errorf("no built-in %s bridges available", mode)
+	}
+	return []string{plugin}, bridges, nil
+}
+
+func (t *Tor) writeTorrc(mode string, socksPort int, user []string) error {
+	if err := os.MkdirAll(t.dataDir, 0o700); err != nil {
+		return err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "DataDirectory %s\n", torQuote(t.dataDir))
+	fmt.Fprintf(&b, "SocksPort 127.0.0.1:%d\n", socksPort)
+	b.WriteString("ControlPort auto\n")
+	fmt.Fprintf(&b, "ControlPortWriteToFile %s\n", torQuote(t.portFile))
+	b.WriteString("CookieAuthentication 1\n")
+	fmt.Fprintf(&b, "CookieAuthFile %s\n", torQuote(filepath.Join(t.dataDir, "control_auth_cookie")))
+	b.WriteString("AvoidDiskWrites 1\nClientOnly 1\n")
+	fmt.Fprintf(&b, "Log notice file %s\n", torQuote(t.logPath))
+	for _, g := range []string{"geoip", "geoip6"} {
+		p := filepath.Join(filepath.Dir(filepath.Dir(t.bin)), "data", g)
+		if fileExists(p) {
+			key := "GeoIPFile"
+			if g == "geoip6" {
+				key = "GeoIPv6File"
+			}
+			fmt.Fprintf(&b, "%s %s\n", key, torQuote(p))
+		}
+	}
+	if mode != "direct" {
+		plugins, bridges, err := t.transportsFor(mode, user)
+		if err != nil {
+			return err
+		}
+		b.WriteString("UseBridges 1\n")
+		for _, p := range plugins {
+			b.WriteString(p + "\n")
+		}
+		for _, br := range bridges {
+			fmt.Fprintf(&b, "Bridge %s\n", br)
+		}
+	}
+	return os.WriteFile(t.torrc, []byte(b.String()), 0o600)
+}
+
+// Start launches tor in mode ("auto" runs the fallback sequence in the
+// background). Returns once tor is up and its control port answers.
+func (t *Tor) Start(want *TorWant, socksPort int) error {
+	if t.bin == "" {
+		t.detect()
+	}
+	if t.bin == "" {
+		return t.fail(fmt.Errorf("tor not found — install Tor Browser or the Tor Expert Bundle, or put tor in %s", t.dir))
+	}
+	if want.Mode == "auto" {
+		go t.auto(want, socksPort)
+		return t.startMode("direct", socksPort, nil, "auto: trying direct")
+	}
+	return t.startMode(want.Mode, socksPort, want.Bridges, "")
+}
+
+func (t *Tor) startMode(mode string, socksPort int, bridges []string, note string) error {
+	t.child.Stop()
+	_ = os.Remove(t.portFile)
+	if err := t.writeTorrc(mode, socksPort, bridges); err != nil {
+		return t.fail(err)
+	}
+	t.child.Bin = t.bin
+	t.child.Dir = filepath.Dir(t.bin) // so relative PT paths resolve
+	t.child.Args = []string{"-f", t.torrc, "--defaults-torrc", os.DevNull}
+	if err := t.child.Start(); err != nil {
+		return t.fail(err)
+	}
+	if err := waitListening([]int{socksPort}, 15*time.Second); err != nil {
+		t.child.Stop()
+		return t.fail(fmt.Errorf("tor didn't come up: %v; %s", err, tailFile(t.logPath, 3)))
+	}
+	t.mu.Lock()
+	t.mode, t.autoNote, t.lastErr = mode, note, ""
+	t.mu.Unlock()
+	return nil
+}
+
+func (t *Tor) auto(want *TorWant, socksPort int) {
+	for i, mode := range []string{"direct", "obfs4", "snowflake", "meek"} {
+		if i > 0 {
+			if err := t.startMode(mode, socksPort, nil, "auto: trying "+mode); err != nil {
+				continue
+			}
+		}
+		budget := 90 * time.Second // bridges take longer to bootstrap
+		if mode == "direct" {
+			budget = 60 * time.Second
+		}
+		deadline := time.Now().Add(budget)
+		for time.Now().Before(deadline) {
+			if p, err := t.Bootstrap(); err == nil && p >= 100 {
+				t.mu.Lock()
+				t.autoNote = "auto: connected via " + mode
+				t.mu.Unlock()
+				return
+			}
+			time.Sleep(2 * time.Second)
+			t.mu.Lock()
+			stillAuto := strings.HasPrefix(t.autoNote, "auto:")
+			t.mu.Unlock()
+			if !stillAuto {
+				return // the user switched modes meanwhile
+			}
+		}
+	}
+	t.mu.Lock()
+	t.autoNote = "auto: no mode bootstrapped"
+	t.mu.Unlock()
+}
+
+func (t *Tor) Stop() {
+	t.mu.Lock()
+	t.autoNote = ""
+	t.mode = ""
+	t.mu.Unlock()
+	t.child.Stop()
+}
+
+func (t *Tor) fail(err error) error {
+	t.mu.Lock()
+	t.lastErr = redact(err.Error())
+	t.mu.Unlock()
+	return errors.New(t.lastErr)
+}
+
+// ---- control port (cookie-authenticated) --------------------------------------
+
+func (t *Tor) controlAddr() (string, error) {
+	b, err := os.ReadFile(t.portFile)
+	if err != nil {
+		return "", err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "PORT=") {
+			return strings.TrimSpace(strings.TrimPrefix(l, "PORT=")), nil
+		}
+	}
+	return "", errors.New("no control port yet")
+}
+
+// Control runs commands on tor's control port and returns the reply lines.
+func (t *Tor) Control(cmds ...string) ([]string, error) {
+	addr, err := t.controlAddr()
+	if err != nil {
+		return nil, err
+	}
+	cookie, err := os.ReadFile(filepath.Join(t.dataDir, "control_auth_cookie"))
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	r := bufio.NewReader(conn)
+	if _, err := readTorReply(conn, r, "AUTHENTICATE "+hex.EncodeToString(cookie)); err != nil {
+		return nil, err
+	}
+	var all []string
+	for _, c := range cmds {
+		lines, err := readTorReply(conn, r, c)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, lines...)
+	}
+	fmt.Fprintf(conn, "QUIT\r\n")
+	return all, nil
+}
+
+func readTorReply(w io.Writer, r *bufio.Reader, cmd string) ([]string, error) {
+	if _, err := fmt.Fprintf(w, "%s\r\n", cmd); err != nil {
+		return nil, err
+	}
+	var lines []string
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if len(line) < 4 {
+			continue
+		}
+		code, sep := line[:3], line[3]
+		if code[0] != '2' {
+			return nil, fmt.Errorf("tor: %s", line)
+		}
+		lines = append(lines, line[4:])
+		if sep == ' ' {
+			return lines, nil
+		}
+	}
+}
+
+var reProgress = regexp.MustCompile(`PROGRESS=(\d+)`)
+
+func (t *Tor) Bootstrap() (int, error) {
+	lines, err := t.Control("GETINFO status/bootstrap-phase")
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range lines {
+		if m := reProgress.FindStringSubmatch(l); m != nil {
+			return strconv.Atoi(m[1])
+		}
+	}
+	return 0, errors.New("no bootstrap progress")
+}
+
+func (t *Tor) NewIdentity() error {
+	_, err := t.Control("SIGNAL NEWNYM")
+	return err
+}
+
+func (t *Tor) Status() map[string]any {
+	t.mu.Lock()
+	st := map[string]any{"mode": t.mode, "binary": t.bin, "transports": t.ptSource}
+	if t.autoNote != "" {
+		st["auto"] = t.autoNote
+	}
+	if t.lastErr != "" {
+		st["error"] = t.lastErr
+	}
+	t.mu.Unlock()
+	for k, v := range t.child.Status() {
+		st[k] = v
+	}
+	if t.child.Running() {
+		if p, err := t.Bootstrap(); err == nil {
+			st["bootstrap"] = p
+		}
+	}
+	return st
+}
+
+// Health: up once fully bootstrapped, degraded while bootstrapping.
+func (t *Tor) Health() (string, int) {
+	if !t.child.Running() {
 		return "down", 0
 	}
-	if p >= 100 {
+	p, err := t.Bootstrap()
+	switch {
+	case err != nil:
+		return "down", 0
+	case p >= 100:
 		return "up", p
-	}
-	if p > 0 {
+	case p > 0:
 		return "degraded", p
 	}
 	return "down", p
 }
 
-func (t *Tor) writeTorrc(mode string, bridges []string) error {
-	if err := os.MkdirAll(t.dataDir, 0o700); err != nil {
-		return err
+// RefreshBridges fetches Tor's current built-in bridges from the Moat API,
+// optionally through a local SOCKS proxy (when bridges.torproject.org is
+// blocked directly), and caches them.
+func (t *Tor) RefreshBridges(viaSocks int) (map[string]int, error) {
+	client := &http.Client{Timeout: 20 * time.Second}
+	if viaSocks > 0 {
+		proxy, _ := url.Parse(fmt.Sprintf("socks5h://127.0.0.1:%d", viaSocks))
+		client.Transport = &http.Transport{Proxy: http.ProxyURL(proxy)}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "SocksPort 127.0.0.1:%d\n", torSocksPort)
-	fmt.Fprintf(&b, "ControlPort 127.0.0.1:%d\n", torCtrlPort)
-	b.WriteString("CookieAuthentication 0\n")
-	fmt.Fprintf(&b, "DataDirectory %s\n", t.dataDir)
-	fmt.Fprintf(&b, "Log warn file %s\n", filepath.Join(t.dir, "tor.log"))
-
-	switch mode {
-	case "direct":
-		// plain connection to the Tor network
-	case "obfs4":
-		if t.obfs4Path == "" {
-			return fmt.Errorf("obfs4 plugin (lyrebird/obfs4proxy) not found")
-		}
-		if len(bridges) == 0 {
-			return fmt.Errorf("obfs4 mode needs Bridge lines — get them from bridges.torproject.org")
-		}
-		b.WriteString("UseBridges 1\n")
-		fmt.Fprintf(&b, "ClientTransportPlugin obfs4 exec %s\n", t.obfs4Path)
-		for _, br := range bridges {
-			fmt.Fprintf(&b, "Bridge %s\n", strings.TrimSpace(br))
-		}
-	case "snowflake":
-		if t.snowflakePath == "" {
-			return fmt.Errorf("snowflake-client not found")
-		}
-		b.WriteString("UseBridges 1\n")
-		fmt.Fprintf(&b, "ClientTransportPlugin snowflake exec %s %s\n", t.snowflakePath, snowflakePTArgs)
-		if len(bridges) == 0 {
-			bridges = []string{snowflakeBridge}
-		}
-		for _, br := range bridges {
-			fmt.Fprintf(&b, "Bridge %s\n", strings.TrimSpace(br))
-		}
-	default:
-		return fmt.Errorf("unknown tor mode %q", mode)
-	}
-	return os.WriteFile(t.torrcPath, []byte(b.String()), 0o600)
-}
-
-func (t *Tor) startLocked() error {
-	t.stopLocked()
-	cmd := exec.Command(t.binPath, "-f", t.torrcPath)
-	cmd.SysProcAttr = detachAttr()
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start tor: %w", err)
-	}
-	_ = os.WriteFile(t.pidPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
-	_ = cmd.Process.Release()
-
-	// Only wait long enough to confirm the control port answers; full bootstrap
-	// (esp. over bridges) can take a while and is reported via health instead.
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := t.bootstrap(); err == nil {
-			break
-		}
-		time.Sleep(400 * time.Millisecond)
-	}
-	return nil
-}
-
-func (t *Tor) stopLocked() {
-	if b, err := os.ReadFile(t.pidPath); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 {
-			if p, err := os.FindProcess(pid); err == nil {
-				_ = p.Kill()
-			}
-		}
-	}
-	_ = os.Remove(t.pidPath)
-}
-
-// bootstrap asks Tor's control port for its bootstrap percentage (0..100).
-func (t *Tor) bootstrap() (int, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", torCtrlPort), 2*time.Second)
+	resp, err := client.Get("https://bridges.torproject.org/moat/circumvention/builtin")
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	r := bufio.NewReader(conn)
-
-	fmt.Fprintf(conn, "AUTHENTICATE\r\n")
-	if _, err := r.ReadString('\n'); err != nil {
-		return 0, err
+	defer resp.Body.Close()
+	var fresh map[string][]string
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&fresh); err != nil {
+		return nil, fmt.Errorf("moat: %w", err)
 	}
-	fmt.Fprintf(conn, "GETINFO status/bootstrap-phase\r\n")
-
-	progress := 0
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			break
-		}
-		if i := strings.Index(line, "PROGRESS="); i >= 0 {
-			num := ""
-			for _, c := range line[i+len("PROGRESS="):] {
-				if c >= '0' && c <= '9' {
-					num += string(c)
-				} else {
-					break
-				}
-			}
-			progress, _ = strconv.Atoi(num)
-		}
-		if strings.HasPrefix(line, "250 OK") || strings.HasPrefix(line, "550") || strings.HasPrefix(line, "510") {
-			break
-		}
+	if len(fresh) == 0 {
+		return nil, errors.New("moat returned no bridges")
 	}
-	fmt.Fprintf(conn, "QUIT\r\n")
-	return progress, nil
+	b, _ := json.MarshalIndent(fresh, "", "  ")
+	if err := os.WriteFile(filepath.Join(t.dir, "bridges.json"), b, 0o600); err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for k, v := range fresh {
+		counts[k] = len(v)
+	}
+	if t.ptSource != "installed pt_config.json" {
+		t.pt.Bridges = fresh
+		t.ptSource = "Moat cache"
+	}
+	return counts, nil
 }

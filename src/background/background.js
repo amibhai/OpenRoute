@@ -344,6 +344,32 @@ export function createBackground({ api }) {
     }
   }
 
+  // Keep the companion's transports in step with what its daemon actually
+  // serves: a port it had to change after a restart is picked up, and a
+  // transport it no longer runs is removed (its domains re-homed).
+  async function syncCompanionTransports() {
+    const r = await ctx.companion.send({ cmd: "transports" });
+    if (!r?.ok || !Array.isArray(r.transports)) return;
+    const live = new Map(r.transports.map((t) => [String(t.id), t]));
+    for (const t of await ctx.transports.configs()) {
+      if (t.kind !== "companion") continue;
+      const now = live.get(t.id);
+      if (!now) {
+        await ctx.transports.remove(t.id);
+        await ctx.ladder.rehome(t.id);
+      } else if (Number(now.port) !== Number(t.port)) {
+        await ctx.transports.upsert({ ...t, port: Number(now.port) });
+        ctx.log.add("companion-port", { id: t.id, port: now.port });
+      }
+    }
+    for (const [id, t] of live) {
+      if (!(await ctx.transports.get(id))) {
+        await ctx.transports.upsert({ id, label: t.label, scheme: "socks5", host: "127.0.0.1", port: Number(t.port), kind: "companion", note: t.note });
+      }
+    }
+    await ctx.router.apply();
+  }
+
   async function maintenance() {
     await ctx.health.recover();
     await probeActiveTransports();
@@ -351,6 +377,7 @@ export function createBackground({ api }) {
       try {
         const report = await ctx.companion.send({ cmd: "health" });
         await ctx.health.merge(report?.transports || []);
+        await syncCompanionTransports();
       } catch { /* companion went away mid-tick */ }
     }
     await ctx.ladder.retryDue();

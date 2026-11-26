@@ -21,7 +21,9 @@ desktop.ini
 # Companion build output
 companion/bin/
 openroute-host
+openroute-companion
 openroute-host.exe
+openroute-companion.exe
 
 # Packaged extension zips
 dist/

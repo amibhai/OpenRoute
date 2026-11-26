@@ -1,105 +1,120 @@
-# OpenRoute companion (Phase B)
+# OpenRoute companion
 
-The native helper that gives the extension the transports a browser can't run on
-its own. It's a Chrome **Native Messaging** host that speaks the length-prefixed
-NM protocol on stdin/stdout and drives a local [`sing-box`](https://sing-box.sagernet.org)
-subprocess exposing a SOCKS proxy on `127.0.0.1:1080`. The extension's
-split-tunnel PAC then routes only blocked domains through it.
+The optional native helper that gives the extension transports a browser
+can't run on its own:
 
-**Why sing-box?** The hard part — audited Shadowsocks-2022 / VLESS-Reality /
-WireGuard / Tor crypto and transports — already exists and is battle-tested.
-This companion *orchestrates* it (generates config, starts it, reads health from
-its Clash API) rather than reimplementing anything security-critical.
+- **your own server or a pool of them**: Shadowsocks-2022, VLESS-Reality, VMess, Trojan, Hysteria2, TUIC,
+  WireGuard, plus authenticated SOCKS/HTTP upstreams, from share links or a subscription
+- **serverless DPI bypass**: TLS ClientHello fragmentation, no server needed
+- **Tor**: direct, obfs4, Snowflake, meek, WebTunnel, or *auto*
 
-## What it does
+It orchestrates [`sing-box`](https://sing-box.sagernet.org) and
+[`tor`](https://www.torproject.org) rather than reimplementing any crypto.
 
-- Parses `ss://`, `vless://` (incl. TLS + **Reality**) share links, or a raw
-  `{...}` sing-box outbound, into a working config.
-- **Pools & rotation (Phase C):** pass several links and they're wrapped in a
-  sing-box `urltest` group — it auto-selects the lowest-latency working node and
-  re-tests every few minutes, so a pool of public/VPS proxies self-heals.
-- **Tor (Phase C):** runs a detached `tor` with a dedicated SOCKS port (9250),
-  in `direct`, `obfs4`, or `snowflake` mode — the free, no-server rung for when
-  even a proxy IP is blocked. Health comes from Tor's control-port bootstrap %.
-- Runs sing-box with a `mixed` (SOCKS+HTTP) inbound + DNS-over-HTTPS **through the
-  tunnel** (this is what an extension can't do — it closes the "Secure DNS is
-  manual" gap).
-- Reports live health/latency per transport back to the extension via the Clash
-  API delay test.
+## How it fits together
 
-### Extra binaries for Tor modes
+```
+browser ──native messaging──▶ openroute-companion (host)   ← started by the browser, stateless
+                                   │ Unix-domain socket in your private data dir
+                                   ▼
+                              openroute-companion daemon   ← owns state, supervises children
+                                   ├── sing-box  (pool · DPI-record · DPI-segment inbounds on 127.0.0.1)
+                                   └── tor       (SOCKS on 127.0.0.1, cookie-authenticated control port)
+```
 
-`tor` is required for any Tor mode; `obfs4` mode also needs **lyrebird** (or the
-older `obfs4proxy`); `snowflake` mode needs **snowflake-client**. All three ship
-inside Tor Browser — point the installer at them or drop them in the data dir.
-`obfs4` mode also needs `Bridge obfs4 …` lines from <https://bridges.torproject.org>.
-
-## Requirements
-
-- [Go](https://go.dev/dl/) 1.21+ to build the host (one static binary, std-lib only).
-- A [`sing-box`](https://github.com/SagerNet/sing-box/releases) binary on `PATH`,
-  or passed to the installer, or dropped in the data dir (`%APPDATA%\OpenRoute`
-  on Windows, `~/.openroute` elsewhere).
+- The **host** is what the browser launches. It checks that the caller is an extension it serves, then forwards each message to the daemon. If the daemon isn't running, the host starts it.
+- The **daemon** keeps the *desired state* on disk and brings it back after a restart or reboot. It supervises its children and restarts them with backoff. If a child keeps crashing it gives up and reports why.
+  - The children die with the daemon. On Windows this is a kill-on-close job object; on Linux, `Pdeathsig`; on macOS, process groups.
+  - The daemon exits on its own when no browser has talked to it for 15 minutes.
+- **No TCP control ports.** Host↔daemon IPC is a Unix-domain socket (supported on Windows 10 1803+).
+  - sing-box's Clash API has a random secret.
+  - Tor's control port uses cookie authentication.
+- **Ports are picked free once and kept stable.** If one ever has to change, the extension notices on its next maintenance tick and follows it.
 
 ## Install
 
-Find your unpacked extension's ID at `chrome://extensions` (Developer mode).
+You need a [`sing-box`](https://github.com/SagerNet/sing-box/releases) binary, **1.12 or newer**. Put it on `PATH`,
+pass it to the installer, or drop it in the data directory: `%APPDATA%\OpenRoute` on Windows, `~/.openroute` elsewhere.
+Tor modes also need Tor Browser or the Tor Expert Bundle installed; the companion finds them on its own.
 
-**Windows** (PowerShell):
+**Windows** (PowerShell, no admin):
 ```powershell
 cd companion\install
-.\install-windows.ps1 -ExtId <extension-id> [-SingBox C:\path\to\sing-box.exe]
+.\install-windows.ps1 [-SingBox C:\path\to\sing-box.exe]
 ```
 
-**macOS / Linux**:
+**macOS / Linux:**
 ```sh
 cd companion/install
-./install-unix.sh <extension-id> [/path/to/sing-box]
+./install-unix.sh [--sing-box /path/to/sing-box]
 ```
 
-The installer runs `go build`, writes the NM host manifest to the browser's
-`NativeMessagingHosts` directory (and, on Windows, the registry key for Chrome +
-Edge), and optionally bundles your `sing-box`. Reload the extension; the popup's
-companion pill should read **connected**.
+The installer builds the companion (with Go 1.21+) or uses a prebuilt binary next to the script. It then registers the companion with every supported browser it finds:
 
-## Use
+- **Chromium family:** Chrome (including Beta, Dev and Canary), Chromium, Edge, Brave, Vivaldi, Opera, Arc, Yandex, Thorium.
+- **Firefox family:** Firefox, LibreWolf, Waterfox, Floorp, Zen.
 
-In the popup → **Transports → Connect via companion**, paste a share link and hit
-**Connect**. The companion brings up sing-box and registers a `companion`
-transport; the ladder will route blocked domains through it.
-
-## Protocol (NM messages)
-
-| → to host | ← response |
-|---|---|
-| `{cmd:"ping"}` | `{ok, cmd:"pong", version}` |
-| `{cmd:"status"}` | `{ok, running, socksPort, activeId, singboxOk, tor:[…]}` |
-| `{cmd:"connect", link\|links, id, label}` | `{ok, socksPort, id, count}` or `{ok:false, error}` |
-| `{cmd:"connectTor", mode, label, bridges}` | `{ok, socksPort:9250, id:"companion-tor", mode}` |
-| `{cmd:"disconnect", kind}` | `{ok}` — `kind` = `singbox` \| `tor` \| omit for both |
-| `{cmd:"transports"}` | `{ok, transports:[…]}` (sing-box + Tor) |
-| `{cmd:"health"}` | `{ok, transports:[{id, health, latencyMs, bootstrap?}]}` |
-
-`connect` takes either a single `link` or a `links` array (pool). `mode` for
-`connectTor` is `direct`, `obfs4`, or `snowflake`.
-
-## Test it end-to-end
+**No extension ID to copy:** the unpacked extension's ID is pinned by its manifest key and allowed out of the box. For a store build, add `--extension-id <id>`.
 
 ```sh
-go vet ./...
-go build -o bin/openroute-host .
-# smoke-test the NM framing without Chrome (4-byte LE length + JSON):
-printf '\x0e\x00\x00\x00{"cmd":"ping"}' | ./bin/openroute-host   # writes a length-prefixed pong
+openroute-companion doctor      # what's installed, what's registered, is the daemon up
+openroute-companion uninstall   # unregister from every browser
 ```
 
-Then, against a real endpoint: stand up a sing-box server (Phase D scripts, or
-any Shadowsocks-2022/Reality server), paste its share link into the popup,
-Connect, and load a blocked site — it should route through `127.0.0.1:1080`.
+## The DPI-bypass rung, honestly
 
-## Honest limits
+sing-box can split the TLS ClientHello so the server name isn't in one packet. It can split across **TLS records** (`dpi-record`) or across **TCP segments** (`dpi-segment`). Splitting defeats filters that match the plaintext SNI, at near-direct speed and with no server.
 
-- Not compiled/tested in this repo's CI — build it on your machine with the steps
-  above. The code is std-lib only so `go build` needs no network.
-- Reality/SS-2022 defeat *current* DPI + active probing; it's an arms race, never
-  a guarantee. This is circumvention, **not anonymity** — a VPS you rent is tied
-  to you.
+sing-box's own documentation says this is for **simple** filters, not sophisticated national DPI. The two are separate transports, so OpenRoute's ladder simply tries them and moves on to a real tunnel when they don't work for a site. (`tls_spoof` exists in sing-box 1.14 but needs administrator/root rights, so the companion doesn't use it.)
+
+## Tor modes
+
+| mode | what it does |
+|---|---|
+| `direct` | plain connection to the Tor network |
+| `obfs4` | built-in obfs4 bridges (or your own `Bridge obfs4 …` lines) |
+| `snowflake` | Snowflake. In current Tor bundles it runs through `lyrebird`, not a separate `snowflake-client` |
+| `meek` | domain-fronted meek_lite |
+| `webtunnel` | your own WebTunnel bridges (from bridges.torproject.org) |
+| `auto` | tries direct, then obfs4, then Snowflake, then meek, until one bootstraps |
+
+Plugin lines and built-in bridges come from the installed Tor's own
+`pt_config.json`. Failing that, the companion uses a bundled snapshot or a fresh copy from Tor's Moat API (`refreshBridges`, optionally fetched *through* another transport when bridges.torproject.org is blocked).
+
+## Protocol
+
+Messages are native-messaging JSON. Every reply carries `ok`, and failures add an `error` with the reason, never a secret.
+
+| → `cmd` | ← reply |
+|---|---|
+| `ping` | `{cmd:"pong", version, singbox:{path,version,ok}, tor:{path}}` |
+| `connect {links[] \| link \| subscription, id, label}` | `{socksPort, id, count}` |
+| `connectDpi` | `{transports:[{id,label,port,note}…]}` |
+| `connectTor {mode, bridges[]}` | `{socksPort, id:"companion-tor", mode}` |
+| `disconnect {kind}` | `kind` = `singbox` \| `dpi` \| `tor` \| *(all)* |
+| `transports` | what the extension should have registered right now |
+| `health` | `[{id, health, latencyMs, bootstrap?}]` (Clash API delay test / Tor bootstrap %) |
+| `status` | sing-box + tor process state, restarts, last error |
+| `newIdentity` | Tor `SIGNAL NEWNYM` |
+| `refreshBridges {viaSocks?}` | fetch current built-in bridges from Tor's Moat API |
+
+## Tests
+
+```sh
+node scripts/setup-tools.mjs     # Go, sing-box 1.12.x + latest, Tor Expert Bundle (checksum-verified, into .tools/)
+cd companion && go vet ./... && go test ./...
+```
+
+The suite checks:
+
+- **Configs:** every config shape the companion generates passes the **real `sing-box check`** on 1.12.x and the latest release.
+- **torrc:** every Tor mode passes the **real `tor --verify-config`**.
+- **Full chain:** browser-style host → daemon → sing-box → a real Shadowsocks-2022 server → a site. A negative control (server down, so the request must fail) proves the traffic really went through the tunnel.
+- **Supervisor:** crash-loop give-up, plus orphan cleanup that never kills a reused PID.
+- **Share-link parsing**, including the formats the old parser rejected.
+
+## Limits
+
+- **Not anonymity.** A server you rent is tied to you. For anonymity use Tor Browser.
+- **No guarantees.** Reality, SS-2022 and Hysteria2 defeat *current* DPI and active probing, but it's an arms race.
+- **Windows needs 10 (1803) or newer** for Unix-domain sockets.
