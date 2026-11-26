@@ -1,12 +1,13 @@
 // OpenRoute native companion.
 //
 // One binary, four roles:
-//   (no command)  native-messaging host — what the browser launches; a thin
-//                 forwarder to the daemon (starts it when needed)
-//   daemon        the supervisor that owns sing-box/tor and the desired state
-//   install       registers the host with every installed browser (no admin)
-//   uninstall     undoes that
-//   doctor        a self-check
+//
+//	(no command)  native-messaging host — what the browser launches; a thin
+//	              forwarder to the daemon (starts it when needed)
+//	daemon        the supervisor that owns sing-box/tor and the desired state
+//	install       registers the host with every installed browser (no admin)
+//	uninstall     undoes that
+//	doctor        a self-check
 //
 // Standard library only, so `go build` needs no network. The transport crypto
 // lives in sing-box and tor, which this program orchestrates rather than
@@ -18,7 +19,7 @@ import (
 	"os"
 )
 
-var version = "1.0.0-dev"
+var version = "1.0.0" // release builds set it with -ldflags "-X main.version=…"
 
 func main() {
 	cmd := ""

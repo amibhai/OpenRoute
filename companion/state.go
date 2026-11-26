@@ -67,12 +67,41 @@ func (s *State) save(path string) error {
 
 // ensurePorts assigns any missing port, and re-assigns one that something
 // else has taken in the meantime.
+// ensurePorts gives every port in need a usable value. It keeps a port that
+// is still free, and never hands out one that another of this state's
+// listeners holds or that two inbounds would share: either would stop
+// sing-box from starting. (A fresh pick from the OS can be a port this state
+// already uses, because Apply stops sing-box first and frees them all.)
 func (s *State) ensurePorts(need ...*int) {
-	for _, p := range need {
-		if *p == 0 || !portFree(*p) {
-			*p = freePort()
+	isNeeded := func(p *int) bool {
+		for _, n := range need {
+			if n == p {
+				return true
+			}
+		}
+		return false
+	}
+	taken := map[int]bool{}
+	for _, p := range []*int{&s.Ports.Pool, &s.Ports.DPIRecord, &s.Ports.DPISegment, &s.Ports.Clash, &s.Ports.TorSocks} {
+		if *p != 0 && !isNeeded(p) {
+			taken[*p] = true
 		}
 	}
+	for _, p := range need {
+		if *p == 0 || taken[*p] || !portFree(*p) {
+			*p = freePortExcept(taken)
+		}
+		taken[*p] = true
+	}
+}
+
+func freePortExcept(taken map[int]bool) int {
+	for i := 0; i < 50; i++ {
+		if p := freePort(); p != 0 && !taken[p] {
+			return p
+		}
+	}
+	return 0
 }
 
 func freePort() int {

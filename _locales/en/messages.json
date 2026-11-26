@@ -208,6 +208,7 @@
   "fieldPassword": { "message": "Password", "description": "Form field." },
   "proxyLoginHint": { "message": "Chromium browsers can log in to HTTP(S) proxies only; for a SOCKS proxy with a login, use the companion.", "description": "" },
   "addedWorking": { "message": "Added, and it works: {ms} ms.", "description": "" },
+  "loginNeedsAccess": { "message": "Proxy logins need access to all sites in this browser. Allow it to add a proxy with a login.", "description": "" },
   "addedNotReachable": { "message": "Added, but it didn't answer yet. Check that it's running.", "description": "" },
 
   "companionTitle": { "message": "Companion app", "description": "" },

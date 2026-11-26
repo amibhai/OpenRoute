@@ -86,7 +86,7 @@ func getThroughSocks(port int, target string) (string, error) {
 func TestEndToEndHostDaemonSingBoxTunnel(t *testing.T) {
 	sb := singBoxBins(t)["1.14"]
 	if sb == "" {
-		t.Skip("needs sing-box 1.14 in .tools")
+		needTool(t, "needs sing-box 1.14 in .tools")
 	}
 	dir := t.TempDir()
 

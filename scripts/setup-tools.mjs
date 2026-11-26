@@ -14,6 +14,7 @@
 //   tor          dist.torproject.org Tor Expert Bundle      (sha256sums-signed-build.txt)
 //   geckodriver  GitHub releases                            (asset "digest")
 //   shellcheck   GitHub releases                            (asset "digest")
+//   actionlint   GitHub releases                            (asset "digest")
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -29,7 +30,7 @@ const UA = { "user-agent": "openroute-setup-tools" };
 const args = process.argv.slice(2);
 const FORCE = args.includes("--force");
 const wanted = args.filter((a) => !a.startsWith("--"));
-const ALL = ["go", "sing-box", "tor", "geckodriver", "shellcheck"];
+const ALL = ["go", "sing-box", "tor", "geckodriver", "shellcheck", "actionlint"];
 const targets = wanted.length ? wanted : ALL;
 
 const OS = { win32: "windows", darwin: "darwin", linux: "linux" }[process.platform];
@@ -224,6 +225,23 @@ async function setupShellcheck() {
   report("shellcheck", ver, findFile(dir, exe("shellcheck")));
 }
 
+async function setupActionlint() {
+  const rel = await getJSON("https://api.github.com/repos/rhysd/actionlint/releases/latest");
+  const ver = rel.tag_name.replace(/^v/, "");
+  const name = `actionlint_${ver}_${OS}_${ARCH}${OS === "windows" ? ".zip" : ".tar.gz"}`;
+  const asset = rel.assets.find((a) => a.name === name);
+  if (!asset) throw new Error(`actionlint: no asset ${name}`);
+  const digest = (asset.digest || "").replace(/^sha256:/, "");
+  if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error("actionlint: release has no sha256 digest to verify against");
+  const dir = join(TOOLS, "actionlint");
+  if (!FORCE && installedVersion(dir) === ver) return report("actionlint", ver, findFile(dir, exe("actionlint")));
+  const archive = await download(asset.browser_download_url, digest, asset.name);
+  rmSync(dir, { recursive: true, force: true });
+  extract(archive, dir);
+  markInstalled(dir, { version: ver, sha256: digest });
+  report("actionlint", ver, findFile(dir, exe("actionlint")));
+}
+
 function cmpVer(a, b) {
   const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
   for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
@@ -236,7 +254,7 @@ function report(tool, version, path) {
 
 // ---- main ------------------------------------------------------------------
 
-const RUNNERS = { go: setupGo, "sing-box": setupSingBox, tor: setupTor, geckodriver: setupGeckodriver, shellcheck: setupShellcheck };
+const RUNNERS = { go: setupGo, "sing-box": setupSingBox, tor: setupTor, geckodriver: setupGeckodriver, shellcheck: setupShellcheck, actionlint: setupActionlint };
 mkdirSync(TOOLS, { recursive: true });
 let failed = 0;
 for (const t of targets) {

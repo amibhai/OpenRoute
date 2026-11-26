@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +52,7 @@ func TestServerScriptLinksWorkThroughTheCompanion(t *testing.T) {
 	}
 	bash := findBash()
 	if bash == "" {
-		t.Skip("needs bash")
+		needTool(t, "needs bash")
 	}
 	ran := false
 	for _, v := range []string{"1.12", "1.14"} {
@@ -60,7 +62,7 @@ func TestServerScriptLinksWorkThroughTheCompanion(t *testing.T) {
 		}
 	}
 	if !ran {
-		t.Skip("needs sing-box in .tools (node scripts/setup-tools.mjs sing-box)")
+		needTool(t, "needs sing-box in .tools (node scripts/setup-tools.mjs sing-box)")
 	}
 }
 
@@ -85,7 +87,10 @@ func serverScriptE2E(t *testing.T, bash, sb string) {
 	cover.StartTLS()
 	defer cover.Close()
 
-	vlessPort, ssPort, hy2Port := freePort(), freePort(), freePort()
+	// Every port this test binds, picked at once: 3 for the server, 2 per client.
+	ports := distinctPorts(t, 9)
+	vlessPort, ssPort, hy2Port := ports[0], ports[1], ports[2]
+	clientPorts := ports[3:]
 	script, _ := filepath.Abs(filepath.Join("..", "server", "install-server.sh"))
 	gen := exec.Command(bash, filepath.ToSlash(script), "generate",
 		"--dir", filepath.ToSlash(dir), "--sing-box", filepath.ToSlash(sb),
@@ -127,7 +132,9 @@ func serverScriptE2E(t *testing.T, bash, sb string) {
 			}
 			continue
 		}
-		clients[scheme] = startCompanionClient(t, sb, filepath.Join(dir, "client-"+scheme), p)
+		pool, clash := clientPorts[0], clientPorts[1]
+		clientPorts = clientPorts[2:]
+		clients[scheme] = startCompanionClient(t, sb, filepath.Join(dir, "client-"+scheme), p, pool, clash)
 	}
 	if versionAtLeast(version, "1.13.0") && clients["hysteria2"] == 0 {
 		t.Fatal("Hysteria2 should run on sing-box 1.13+")
@@ -173,12 +180,12 @@ func serverScriptE2E(t *testing.T, bash, sb string) {
 
 // startCompanionClient runs sing-box with the config the companion would
 // build for this one link, and returns its local proxy port.
-func startCompanionClient(t *testing.T, sb, dir string, p Parsed) int {
+func startCompanionClient(t *testing.T, sb, dir string, p Parsed, poolPort, clashPort int) int {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	st := &State{Secret: "test", Ports: Ports{Pool: freePort(), Clash: freePort()}}
+	st := &State{Secret: "test", Ports: Ports{Pool: poolPort, Clash: clashPort}}
 	cfg := buildSingBoxConfig(st, []Parsed{p}, "", filepath.Join(dir, "sing-box.log"))
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	path := filepath.Join(dir, "config.json")
@@ -267,6 +274,118 @@ func testServerConfig(t *testing.T, dir string, dropRejects bool) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestInstalledServerLinks checks a server installed for real by
+// install-server.sh (CI's "server-install" job does this on a fresh Ubuntu
+// with systemd). OPENROUTE_INSTALLED_LINKS names a copy of its links.txt.
+// Through every link, a companion-built client must reach the internet, and
+// must be refused a service on the server's own loopback.
+func TestInstalledServerLinks(t *testing.T) {
+	path := os.Getenv("OPENROUTE_INSTALLED_LINKS")
+	if path == "" {
+		t.Skip("set OPENROUTE_INSTALLED_LINKS to an installed server's links.txt")
+	}
+	sb := os.Getenv("OPENROUTE_SINGBOX")
+	if sb == "" {
+		sb = singBoxBins(t)["1.14"]
+	}
+	if sb == "" {
+		t.Fatal("needs a sing-box client (OPENROUTE_SINGBOX)")
+	}
+	version, err := singBoxVersion(sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var links []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "://") {
+			links = append(links, strings.TrimSpace(l))
+		}
+	}
+	if len(links) == 0 {
+		t.Fatalf("no links in %s", path)
+	}
+	// Something only the server's own loopback can reach: refused, or the
+	// config's private-address rules don't hold on the real install.
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "should not be reachable") }))
+	defer local.Close()
+
+	dir := t.TempDir()
+	for i, link := range links {
+		scheme := link[:strings.Index(link, "://")]
+		p, err := parseLink(link)
+		if err != nil {
+			t.Fatalf("%s: %v", scheme, err)
+		}
+		if err := requireFeatures(version, []Parsed{p}); err != nil {
+			t.Fatalf("%s: %v", scheme, err)
+		}
+		pp := distinctPorts(t, 2)
+		port := startCompanionClient(t, sb, filepath.Join(dir, strconv.Itoa(i)), p, pp[0], pp[1])
+		var status int
+		for try := 0; try < 5 && status != http.StatusNoContent; try++ {
+			status, err = statusThroughSocks(port, "http://connectivitycheck.gstatic.com/generate_204")
+			if status != http.StatusNoContent {
+				time.Sleep(time.Second)
+			}
+		}
+		if status != http.StatusNoContent {
+			t.Errorf("%s: no internet through the installed server: %d %v", scheme, status, err)
+		}
+		if body, err := getThroughSocks(port, local.URL); err == nil {
+			t.Errorf("%s: the installed server let a client reach its loopback (%q)", scheme, body)
+		}
+	}
+}
+
+func statusThroughSocks(port int, target string) (int, error) {
+	proxy, _ := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", port))
+	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}}
+	resp, err := client.Get(target)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+// distinctPorts returns n ports that are free right now for both TCP and
+// UDP (Hysteria2 is UDP), and distinct: separate freePort() calls aren't —
+// a port the OS just freed can come straight back. All are held open until
+// every one is picked.
+func distinctPorts(t *testing.T, n int) []int {
+	t.Helper()
+	var held []io.Closer
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+	var ports []int
+	for tries := 0; len(ports) < n; tries++ {
+		if tries > 50*n {
+			t.Fatal("couldn't find enough free ports")
+		}
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, ln)
+		p := ln.Addr().(*net.TCPAddr).Port
+		pc, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			continue // its UDP side is taken
+		}
+		held = append(held, pc)
+		ports = append(ports, p)
+	}
+	return ports
 }
 
 // getWithRetry allows for the first handshake (QUIC in particular) to take

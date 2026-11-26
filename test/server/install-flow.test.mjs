@@ -12,6 +12,8 @@ import { fakeSystem, findBash, findSingBox, openpgpFingerprint, sniCandidates } 
 const bash = findBash();
 const singBox = findSingBox("1.14");
 const skip = !bash ? "needs bash" : !singBox ? "needs sing-box in .tools (npm run setup-tools -- sing-box)" : false;
+// CI promises the tools: a missing one must fail, not quietly skip.
+if (skip && process.env.OPENROUTE_REQUIRE_TOOLS) throw new Error(`required tool missing: ${skip}`);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const BASE = ["--host", "203.0.113.7", "--sni", "www.example.com", "--no-qr"];
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");

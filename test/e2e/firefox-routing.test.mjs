@@ -11,6 +11,8 @@ import { launchFirefox, firefoxAvailable } from "./helpers/firefox.mjs";
 import { waitFor } from "./helpers/chromium.mjs";
 
 const skip = !firefoxAvailable() && "Firefox or geckodriver not found (run: node scripts/setup-tools.mjs geckodriver)";
+// CI promises Firefox: a missing one must fail, not quietly skip.
+if (skip && process.env.OPENROUTE_REQUIRE_TOOLS) throw new Error(`required tool missing: ${skip}`);
 
 let target, socks, ff, DEAD_PORT;
 

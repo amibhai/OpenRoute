@@ -229,6 +229,12 @@ is_hostname() {
 }
 is_host() { is_ipv4 "$1" || is_ipv6 "$1" || is_hostname "$1"; }
 
+# SHA-256 of stdin, as hex: coreutils' sha256sum, or shasum where that's
+# missing (macOS, for the generate step).
+sha256_hex() {
+  if have sha256sum; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi
+}
+
 parse_dest() {
   local d=$1 h p
   case $d in
@@ -448,7 +454,7 @@ install_from_release() {
     rm -rf "$tmp"
     die "couldn't download sing-box from GitHub"
   fi
-  if [ "$(sha256sum "$tmp/sing-box.tar.gz" | cut -d' ' -f1)" != "$sum" ]; then
+  if [ "$(sha256_hex <"$tmp/sing-box.tar.gz")" != "$sum" ]; then
     rm -rf "$tmp"
     die "the downloaded sing-box doesn't match its pinned SHA-256 ($sum); not installing it"
   fi
@@ -509,8 +515,8 @@ new_hy2_certificate() {
   # Clients check one of these instead of a CA: the SHA-256 of the public
   # key (sing-box's certificate_public_key_sha256, which OpenRoute uses) and
   # of the whole certificate (Hysteria's standard pinSHA256, for other apps).
-  HY2_PIN=$(openssl x509 -pubkey -noout <"$HY2_CERT" | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)
-  HY2_CERT_SHA256=$(openssl x509 -outform der <"$HY2_CERT" | sha256sum | cut -d' ' -f1)
+  HY2_PIN=$(openssl x509 -pubkey -noout <"$HY2_CERT" | openssl pkey -pubin -outform der | sha256_hex)
+  HY2_CERT_SHA256=$(openssl x509 -outform der <"$HY2_CERT" | sha256_hex)
   [[ $HY2_PIN =~ ^[0-9a-f]{64}$ && $HY2_CERT_SHA256 =~ ^[0-9a-f]{64}$ ]] || die "couldn't compute the Hysteria2 certificate pin"
 }
 

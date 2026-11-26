@@ -373,6 +373,11 @@ function init() {
     e.preventDefault();
     const user = $("#tUser").value.trim();
     const pass = $("#tPass").value;
+    // Chromium answers a proxy's login challenge only with site access; ask
+    // while this submit still counts as the user's gesture.
+    if ((user || pass) && STATE.capabilities?.proxyEngine === "chromium" && STATE.access?.hostAccess === false) {
+      if (!(await requestPermissions({ origins: ["<all_urls>"] }))) return say("#addResult", t("loginNeedsAccess"), "bad");
+    }
     const transport = {
       label: $("#tLabel").value.trim(), scheme: $("#tScheme").value,
       host: $("#tHost").value.trim(), port: Number.parseInt($("#tPort").value.trim(), 10), kind: "user",

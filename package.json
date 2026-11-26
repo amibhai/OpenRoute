@@ -1,6 +1,6 @@
 {
   "name": "openroute",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Detects blocked sites, diagnoses how they're blocked, and routes only those domains down a failover ladder. Dev tooling only — the extension itself has zero runtime dependencies.",
   "license": "MIT",
@@ -19,7 +19,8 @@
     "test:live": "node --test --test-reporter=spec \"test/live/**/*.test.mjs\"",
     "test:server": "node --test --test-concurrency=1 --test-reporter=spec \"test/server/**/*.test.mjs\"",
     "test:companion": "node scripts/go.mjs",
-    "lint:sh": "node scripts/lint-sh.mjs"
+    "lint:sh": "node scripts/lint-sh.mjs",
+    "lint:ci": "node scripts/lint-ci.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

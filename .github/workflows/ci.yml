@@ -1,0 +1,206 @@
+# Every push to main and every pull request:
+#   - the extension: lint, unit tests, Mozilla's linter, every build target;
+#   - the extension in real Chromium and real Firefox;
+#   - the companion on Linux, Windows and macOS against real sing-box and tor;
+#   - the server script: shellcheck, its install flows against stand-ins, and
+#     a real install on a fresh Ubuntu with systemd, used through every link
+#     it prints, then uninstalled without a trace.
+#
+# Actions are pinned to commit SHAs (the tag is in the comment) and run with
+# a read-only token. OPENROUTE_REQUIRE_TOOLS turns "tool missing → skip"
+# into a failure, so a broken download can't pass as green.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENROUTE_REQUIRE_TOOLS: "1"
+  NODE_VERSION: "22"
+
+jobs:
+  extension:
+    name: Extension · lint, unit, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Mozilla's add-on linter
+        run: npm run lint:firefox
+      - name: Build every target
+        run: node scripts/build.mjs all
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extension-builds
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  e2e-chromium:
+    name: Extension · real Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Routing, probing, deep detection and the UI audit
+        run: node --test --test-concurrency=1 --test-reporter=spec "test/e2e/chromium-*.test.mjs"
+
+  e2e-firefox:
+    name: Extension · real Firefox
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Firefox (from the runner image) and geckodriver
+        run: |
+          echo "OPENROUTE_FIREFOX=$(readlink -f "$(command -v firefox)")" >> "$GITHUB_ENV"
+          firefox --version
+          node scripts/setup-tools.mjs geckodriver
+      - name: Routing via proxy.onRequest, consent, event-page wake, discovery
+        run: node --test --test-concurrency=1 --test-reporter=spec "test/e2e/firefox-*.test.mjs"
+
+  companion:
+    name: Companion · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false # standard library only: nothing to cache
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Real sing-box (1.12.x and latest) and the Tor Expert Bundle, checksum-verified
+        run: node scripts/setup-tools.mjs sing-box tor
+      - name: gofmt
+        working-directory: companion
+        run: test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }
+      - name: go vet
+        working-directory: companion
+        run: go vet ./...
+      - name: go test (real sing-box check, tor --verify-config, tunnels end to end)
+        working-directory: companion
+        run: go test -count=1 ./...
+      - name: Cross-compile for every release platform
+        working-directory: companion
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -o "$RUNNER_TEMP/cc-${target%/*}-${target#*/}" . || exit 1
+          done
+
+  server:
+    name: Server · shellcheck and install flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node scripts/setup-tools.mjs shellcheck actionlint sing-box
+      - run: npm run lint:sh
+      - name: actionlint (these workflows, and shellcheck over their run blocks)
+        run: npm run lint:ci
+      - name: Install, re-install, rotate, doctor, uninstall, v0.3 upgrade (stand-ins for systemctl & co.)
+        run: npm run test:server
+
+  server-install:
+    name: Server · real install on Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Install (the pinned release, verified against its built-in SHA-256)
+        run: sudo bash server/install-server.sh install --source release --host 127.0.0.1 --sni auto --hysteria2 --yes --no-qr
+      - name: The service runs sandboxed as its own user
+        run: |
+          systemctl is-active openroute-server
+          test "$(systemctl show -p User --value openroute-server)" = openroute
+          systemd-analyze security openroute-server --no-pager | tail -n 1
+      - name: Doctor finds nothing wrong
+        # Its clock check reads the VM's sync flag, which says nothing about
+        # this code; any other problem fails the job.
+        run: |
+          sudo bash server/install-server.sh doctor | tee "$RUNNER_TEMP/doctor.txt" || true
+          if grep "✗" "$RUNNER_TEMP/doctor.txt" | grep -v "NTP-synchronized"; then exit 1; fi
+          grep -q "openroute-server is running" "$RUNNER_TEMP/doctor.txt"
+      - name: Every link works through the companion, and the server's loopback stays closed
+        working-directory: companion
+        run: |
+          sudo install -m 644 /etc/openroute-server/links.txt "$RUNNER_TEMP/links.txt"
+          OPENROUTE_INSTALLED_LINKS="$RUNNER_TEMP/links.txt" OPENROUTE_SINGBOX=/usr/local/bin/sing-box \
+            go test -count=1 -run TestInstalledServerLinks -v ./...
+      - name: Re-running keeps the links
+        run: |
+          sudo cp /etc/openroute-server/links.txt "$RUNNER_TEMP/before.txt"
+          sudo bash server/install-server.sh install --yes --no-qr
+          sudo cmp /etc/openroute-server/links.txt "$RUNNER_TEMP/before.txt"
+      - name: Rotate issues new credentials
+        # Explicit ifs throughout: bash's errexit ignores commands negated with "!".
+        run: |
+          sudo bash server/install-server.sh rotate --no-qr
+          if sudo cmp -s /etc/openroute-server/links.txt "$RUNNER_TEMP/before.txt"; then echo "::error::rotate kept the old links"; exit 1; fi
+          systemctl is-active openroute-server
+      - name: Uninstall leaves nothing behind
+        run: |
+          sudo bash server/install-server.sh uninstall --yes --purge
+          for p in /etc/openroute-server /etc/systemd/system/openroute-server.service /usr/local/bin/sing-box /etc/sysctl.d/90-openroute-server.conf; do
+            if [ -e "$p" ]; then echo "::error::left behind: $p"; exit 1; fi
+          done
+          if getent passwd openroute >/dev/null; then echo "::error::the openroute user is still there"; exit 1; fi
+          if systemctl is-active --quiet openroute-server; then echo "::error::the service still runs"; exit 1; fi

@@ -33,6 +33,14 @@ browser ──native messaging──▶ openroute-companion (host)   ← started
 
 ## Install
 
+**The easy way:** download the archive for your system from the project's
+[Releases](https://github.com/amibhai/OpenRoute/releases), for example
+`openroute-companion-1.0.0-windows-amd64.zip` or
+`…-darwin-arm64.tar.gz`. Unpack it, then run the installer inside it (below).
+The archive's binary is used as is, so you don't need Go. Each release lists
+its SHA-256 checksums and carries build provenance (see
+[SECURITY.md](../SECURITY.md)).
+
 You need a [`sing-box`](https://github.com/SagerNet/sing-box/releases) binary, **1.12 or newer**. Put it on `PATH`,
 pass it to the installer, or drop it in the data directory: `%APPDATA%\OpenRoute` on Windows, `~/.openroute` elsewhere.
 Tor modes also need Tor Browser or the Tor Expert Bundle installed; the companion finds them on its own.

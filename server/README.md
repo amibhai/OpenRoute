@@ -10,6 +10,9 @@ less install-server.sh          # it runs as root, so read it first; it's writte
 sudo bash install-server.sh
 ```
 
+You can also take `install-server.sh` from a [release](https://github.com/amibhai/OpenRoute/releases) and check
+it against the release's `SHA256SUMS`.
+
 Any systemd Linux works: Debian, Ubuntu, Fedora, RHEL / Alma / Rocky and others. Supported
 architectures are amd64, arm64, armv7 and i386. A $5 box is plenty.
 
@@ -160,9 +163,21 @@ Start with `sudo bash install-server.sh doctor`. It checks each of these and say
   repositories, and a tampered file fails.
 - **shellcheck** at style level, over every shell script.
 
-**Not covered yet: a run on a real VPS from this repo.** The systemd sandbox settings are standard, and a
-too-old systemd ignores the ones it doesn't know rather than failing. Even so, if the service won't start on
-your distro, `doctor` and `journalctl -u openroute-server` will say why. Please open an issue.
+- **A real install, in CI.** On every change, a fresh Ubuntu runner with systemd goes through the full
+  cycle:
+  1. installs the pinned release;
+  2. checks that the service runs sandboxed as its own user;
+  3. runs `doctor`;
+  4. pushes traffic through every printed link;
+  5. confirms the server's loopback stays closed;
+  6. re-installs, which must keep the links;
+  7. rotates, which must change them;
+  8. uninstalls, which must leave nothing behind.
+
+**Not covered yet: other distributions on real systems.** Debian, Fedora and RHEL / Alma / Rocky run only
+against the stand-ins. The systemd sandbox settings are standard, and a too-old systemd ignores the ones it
+doesn't know rather than failing. Even so, if the service won't start on your distro, `doctor` and
+`journalctl -u openroute-server` will say why. Please open an issue.
 
 ## Honest notes
 

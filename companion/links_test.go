@@ -168,7 +168,7 @@ func TestRedaction(t *testing.T) {
 
 func TestCertificatePinning(t *testing.T) {
 	spki := "cf016e91c1f9a7f4227d0c6cab3053e39e05ac8a01f0f59c1ec77f3e38bcccb4" // hex, as the server script prints it
-	want := "zwFukcH5p/QifQxsqzBT454FrIoB8PWcHsd/Pji8zLQ="                       // what sing-box wants: std base64
+	want := "zwFukcH5p/QifQxsqzBT454FrIoB8PWcHsd/Pji8zLQ="                     // what sing-box wants: std base64
 	base := "hysteria2://pw@203.0.113.9:28443/?sni=www.example.com&obfs=salamander&obfs-password=ob"
 
 	for name, q := range map[string]string{

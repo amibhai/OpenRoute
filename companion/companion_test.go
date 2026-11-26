@@ -25,6 +25,17 @@ func toolPath(t *testing.T, glob string) string {
 	return abs
 }
 
+// needTool skips a test whose tool is missing, or fails it where the tools
+// are promised (CI sets OPENROUTE_REQUIRE_TOOLS=1), so a download that went
+// wrong can never turn into a silent pass.
+func needTool(t *testing.T, msg string) {
+	t.Helper()
+	if os.Getenv("OPENROUTE_REQUIRE_TOOLS") != "" {
+		t.Fatal(msg)
+	}
+	t.Skip(msg)
+}
+
 func singBoxBins(t *testing.T) map[string]string {
 	bins := map[string]string{}
 	for _, v := range []string{"1.12", "1.14"} {
@@ -60,7 +71,7 @@ func TestNMFramingRoundTrip(t *testing.T) {
 func TestGeneratedConfigsPassSingBoxCheck(t *testing.T) {
 	bins := singBoxBins(t)
 	if len(bins) == 0 {
-		t.Skip("no sing-box in .tools (run: node scripts/setup-tools.mjs sing-box)")
+		needTool(t, "no sing-box in .tools (run: node scripts/setup-tools.mjs sing-box)")
 	}
 	links := []string{
 		"ss://2022-blake3-aes-128-gcm:YctPZ6U7xPPcU%2Bgp3u%2BH5w%3D%3D@203.0.113.5:8388",
@@ -82,10 +93,10 @@ func TestGeneratedConfigsPassSingBoxCheck(t *testing.T) {
 		pool []Parsed
 		doh  string
 	}{
-		"pool+dpi":    {&State{Profile: &Profile{ID: "p"}, DPI: true, Ports: ports, Secret: "s"}, pool, "1.1.1.1"},
-		"dpi-only":    {&State{DPI: true, Ports: ports, Secret: "s"}, nil, "8.8.8.8"},
-		"single":      {&State{Profile: &Profile{ID: "p"}, Ports: ports, Secret: "s"}, pool[:1], ""},
-		"wireguard":   {&State{Profile: &Profile{ID: "p"}, Ports: ports, Secret: "s"}, pool[len(pool)-1:], "1.1.1.1"},
+		"pool+dpi":  {&State{Profile: &Profile{ID: "p"}, DPI: true, Ports: ports, Secret: "s"}, pool, "1.1.1.1"},
+		"dpi-only":  {&State{DPI: true, Ports: ports, Secret: "s"}, nil, "8.8.8.8"},
+		"single":    {&State{Profile: &Profile{ID: "p"}, Ports: ports, Secret: "s"}, pool[:1], ""},
+		"wireguard": {&State{Profile: &Profile{ID: "p"}, Ports: ports, Secret: "s"}, pool[len(pool)-1:], "1.1.1.1"},
 	}
 	dir := t.TempDir()
 	for name, sh := range shapes {
@@ -118,7 +129,7 @@ func TestSingBoxVersionDetection(t *testing.T) {
 func TestTorrcFromRealExpertBundle(t *testing.T) {
 	torBin := toolPath(t, "tor/tor/"+exeName("tor"))
 	if torBin == "" {
-		t.Skip("no Tor Expert Bundle in .tools (run: node scripts/setup-tools.mjs tor)")
+		needTool(t, "no Tor Expert Bundle in .tools (run: node scripts/setup-tools.mjs tor)")
 	}
 	t.Setenv("OPENROUTE_TOR", torBin)
 	tor := newTor(t.TempDir(), nil)
@@ -212,4 +223,29 @@ func TestOrphanCleanupVerifiesExecutable(t *testing.T) {
 		t.Fatalf("killed an unrelated process: %v", killed)
 	}
 	_ = self
+}
+
+// Two listeners on one port would stop sing-box from starting: ports this
+// state already uses are kept when free, and never handed out twice.
+func TestEnsurePortsNeverSharesAPort(t *testing.T) {
+	p := freePort()
+	st := &State{Ports: Ports{Pool: p, DPIRecord: p, Clash: 0, TorSocks: 0}}
+	st.ensurePorts(&st.Ports.Pool, &st.Ports.DPIRecord, &st.Ports.Clash)
+	if st.Ports.Pool != p {
+		t.Errorf("a free port in use should be kept: %d → %d", p, st.Ports.Pool)
+	}
+	seen := map[int]bool{}
+	for _, v := range []int{st.Ports.Pool, st.Ports.DPIRecord, st.Ports.Clash} {
+		if v == 0 || seen[v] {
+			t.Fatalf("ports must be set and distinct: %+v", st.Ports)
+		}
+		seen[v] = true
+	}
+
+	// Tor's port isn't being (re)assigned here, but it's in use: off limits.
+	st = &State{Ports: Ports{Pool: p, TorSocks: p}}
+	st.ensurePorts(&st.Ports.Pool)
+	if st.Ports.Pool == p || st.Ports.Pool == 0 {
+		t.Errorf("sing-box's port must not take Tor's: pool %d, tor %d", st.Ports.Pool, st.Ports.TorSocks)
+	}
 }
