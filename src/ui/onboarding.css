@@ -1,0 +1,41 @@
+/* Onboarding layout; tokens and components come from shared/base.css. */
+
+body.onboarding { font-size: 15px; line-height: 1.55; background: var(--surface); }
+.wrap { max-width: 720px; margin: 0 auto; padding: 32px 20px 60px; display: flex; flex-direction: column; gap: 16px; }
+
+.hero { display: flex; gap: 16px; align-items: center; margin-block-end: 8px; }
+.hero img { border-radius: 12px; flex: none; }
+.hero h1 { font-size: 26px; letter-spacing: -0.4px; }
+.sub { margin-block-start: 4px; color: var(--muted); }
+
+.onboarding .card { background: var(--bg); border-radius: 14px; padding: 20px; }
+.step { display: flex; gap: 16px; }
+.stack { display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1; }
+.num {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--primary-bg); color: var(--primary-on);
+  display: grid; place-items: center; font-weight: 700; font-size: 15px;
+}
+.step h2 { font-size: 18px; }
+.hint { color: var(--muted); font-size: 13.5px; }
+.ladder { margin: 0; padding-inline-start: 20px; }
+.ladder li { margin-block: 3px; }
+
+.reality { background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; }
+.reality h2 { font-size: 15px; margin-block-end: 6px; }
+.reality p { font-size: 14px; }
+
+.onboarding .actions.end { align-items: center; gap: 14px; }
+.onboarding .btn { min-height: 36px; padding: 7px 16px; font-size: 14px; }
+.onboarding .btn.small { min-height: 30px; padding: 4px 12px; font-size: 13px; }
+
+.checklist { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 10px; }
+.checklist li { display: grid; grid-template-columns: 20px 1fr auto; gap: 10px; align-items: start; }
+.checklist .state { font-weight: 700; color: var(--muted); text-align: center; }
+.checklist li.done .state { color: var(--good); }
+
+@media (max-width: 520px) {
+  .checklist li { grid-template-columns: 20px 1fr; }
+  .checklist li .btn { grid-column: 2; justify-self: start; }
+  .step { gap: 10px; }
+}

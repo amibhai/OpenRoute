@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n="dashboardTitle"></title>
+  <link rel="stylesheet" href="shared/base.css" />
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body class="options">
+  <a class="skip" href="#main" data-i18n="skipToContent"></a>
+  <header class="top">
+    <img src="../../icons/icon48.png" alt="" width="28" height="28" />
+    <h1 data-i18n="dashboardTitle"></h1>
+    <span id="version" class="muted small"></span>
+  </header>
+
+  <div class="layout">
+    <nav class="side" aria-labelledby="navTitle">
+      <h2 id="navTitle" class="sr-only" data-i18n="navLabel"></h2>
+      <ul>
+        <li><a href="#sites" data-i18n="navSites"></a></li>
+        <li><a href="#transports" data-i18n="navTransports"></a></li>
+        <li><a href="#dns" data-i18n="navDns"></a></li>
+        <li><a href="#rules" data-i18n="navRules"></a></li>
+        <li><a href="#settings" data-i18n="navSettings"></a></li>
+        <li><a href="#diagnostics" data-i18n="navDiagnostics"></a></li>
+      </ul>
+    </nav>
+
+    <main id="main" tabindex="-1">
+      <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+
+      <!-- Sites ------------------------------------------------------------------>
+      <section id="sites" class="page" aria-labelledby="sitesH">
+        <h2 id="sitesH" data-i18n="navSites"></h2>
+        <p class="lead muted" data-i18n="sitesLead"></p>
+        <div class="toolbar">
+          <label class="field grow"><span data-i18n="search"></span><input id="siteSearch" type="search" data-i18n-attr="placeholder:searchSitesPlaceholder" /></label>
+          <label class="field"><span data-i18n="show"></span>
+            <select id="siteFilter">
+              <option value="all" data-i18n="filterAll"></option>
+              <option value="attention" data-i18n="filterAttention"></option>
+              <option value="routed" data-i18n="filterRouted"></option>
+              <option value="working" data-i18n="filterWorking"></option>
+            </select>
+          </label>
+          <button id="clearAll" class="btn danger" type="button" data-i18n="clearAllSites"></button>
+        </div>
+        <p id="sitesResult" class="note" role="status" aria-live="polite"></p>
+        <ul id="groupList" class="groups"></ul>
+        <p id="groupsEmpty" class="empty muted" data-i18n="sitesEmptyDashboard" hidden></p>
+      </section>
+
+      <!-- Transports ------------------------------------------------------------->
+      <section id="transports" class="page" aria-labelledby="transportsH" hidden>
+        <h2 id="transportsH" data-i18n="navTransports"></h2>
+        <p class="lead muted" data-i18n="transportsLead"></p>
+        <ul id="transportCards" class="cards"></ul>
+        <p id="transportsEmpty" class="empty muted" data-i18n="noTransports" hidden></p>
+        <div class="row center">
+          <button id="discover" class="btn" type="button" data-i18n="findLocalProxies"></button>
+          <p id="discoverResult" class="note" role="status" aria-live="polite"></p>
+        </div>
+
+        <h3 data-i18n="addProxyTitle"></h3>
+        <form id="addForm" class="card stack">
+          <div class="row">
+            <label class="field grow"><span data-i18n="fieldLabel"></span><input id="tLabel" maxlength="60" data-i18n-attr="placeholder:fieldLabelPlaceholder" /></label>
+            <label class="field"><span data-i18n="fieldType"></span>
+              <select id="tScheme">
+                <option value="socks5" data-i18n="schemeSocks5"></option>
+                <option value="http" data-i18n="schemeHttp"></option>
+                <option value="https" data-i18n="schemeHttps"></option>
+                <option value="socks4" data-i18n="schemeSocks4"></option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label class="field grow"><span data-i18n="fieldHost"></span><input id="tHost" required data-i18n-attr="placeholder:fieldHostPlaceholder" /></label>
+            <label class="field port"><span data-i18n="fieldPort"></span><input id="tPort" required inputmode="numeric" data-i18n-attr="placeholder:fieldPortPlaceholder" /></label>
+          </div>
+          <details>
+            <summary data-i18n="proxyLogin"></summary>
+            <div class="row">
+              <label class="field grow"><span data-i18n="fieldUsername"></span><input id="tUser" autocomplete="off" /></label>
+              <label class="field grow"><span data-i18n="fieldPassword"></span><input id="tPass" type="password" autocomplete="new-password" /></label>
+            </div>
+            <p class="muted small" data-i18n="proxyLoginHint"></p>
+          </details>
+          <div class="row">
+            <button class="btn primary" type="submit" data-i18n="addTransport"></button>
+            <p id="addResult" class="note" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+
+        <section id="companion" class="card stack" aria-labelledby="companionH">
+          <div class="card-head">
+            <h3 id="companionH" data-i18n="companionTitle"></h3>
+            <span id="companionChip" class="chip"></span>
+          </div>
+          <p id="companionHelp" class="muted small"></p>
+          <div id="companionControls" class="stack">
+            <div class="sub">
+              <h4 data-i18n="companionServerTitle"></h4>
+              <p class="muted small" data-i18n="companionServerHelp"></p>
+              <label class="field"><span data-i18n="shareLinks"></span><textarea id="cLinks" rows="3" data-i18n-attr="placeholder:shareLinksPlaceholder"></textarea></label>
+              <div class="row">
+                <label class="field grow"><span data-i18n="fieldLabel"></span><input id="cLabel" maxlength="60" data-i18n-attr="placeholder:companionLabelPlaceholder" /></label>
+                <button id="cConnect" class="btn primary" type="button" data-i18n="connect"></button>
+                <button id="cDisconnectServer" class="btn" type="button" data-i18n="disconnect"></button>
+              </div>
+            </div>
+            <div class="sub">
+              <h4 data-i18n="dpiTitle"></h4>
+              <p class="muted small" data-i18n="dpiHelp"></p>
+              <div class="row">
+                <button id="cDpi" class="btn" type="button" data-i18n="dpiConnect"></button>
+                <button id="cDisconnectDpi" class="btn" type="button" data-i18n="disconnect"></button>
+              </div>
+            </div>
+            <div class="sub">
+              <h4 data-i18n="torTitle"></h4>
+              <p class="muted small" data-i18n="torHelp"></p>
+              <div class="row">
+                <label class="field"><span data-i18n="torMode"></span><select id="cTorMode"></select></label>
+                <button id="cTor" class="btn" type="button" data-i18n="torConnect"></button>
+                <button id="cNewIdentity" class="btn" type="button" data-i18n="torNewIdentity"></button>
+                <button id="cRefreshBridges" class="btn" type="button" data-i18n="torRefreshBridges"></button>
+                <button id="cDisconnectTor" class="btn" type="button" data-i18n="disconnect"></button>
+              </div>
+              <label class="field" id="bridgesField"><span data-i18n="torBridges"></span><textarea id="cBridges" rows="2" data-i18n-attr="placeholder:torBridgesPlaceholder"></textarea></label>
+            </div>
+            <div class="row center">
+              <button id="cCheck" class="btn ghost small" type="button" data-i18n="companionCheckStatus"></button>
+              <p id="cResult" class="note" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- DNS --------------------------------------------------------------------->
+      <section id="dns" class="page" aria-labelledby="dnsH" hidden>
+        <h2 id="dnsH" data-i18n="navDns"></h2>
+        <p class="lead muted" data-i18n="dnsLead"></p>
+        <div class="card stack">
+          <h3 data-i18n="secureDnsTitle"></h3>
+          <p class="muted" data-i18n="secureDnsHelp"></p>
+          <div><button id="openDns" class="btn primary" type="button" data-i18n="openSecureDns"></button></div>
+          <ol id="dnsSteps" class="steps" hidden></ol>
+        </div>
+        <div class="card stack">
+          <h3 data-i18n="diagnosisTitle"></h3>
+          <label class="check"><input type="checkbox" id="remoteDiagnosis" /><span><span data-i18n="remoteDiagnosis"></span><span class="hint muted small" data-i18n="remoteDiagnosisHint"></span></span></label>
+          <div id="consentRow" class="row center" hidden>
+            <span class="muted small" data-i18n="consentNeeded"></span>
+            <button id="grantConsent" class="btn small" type="button" data-i18n="allow"></button>
+          </div>
+          <div class="row">
+            <label class="field"><span data-i18n="dohProvider"></span><select id="dohProvider"></select></label>
+            <label class="field grow"><span data-i18n="customDoh"></span><input id="customDoH" type="url" data-i18n-attr="placeholder:customDohPlaceholder" /></label>
+            <button id="saveDoh" class="btn" type="button" data-i18n="save"></button>
+          </div>
+          <p class="muted small" data-i18n="customDohHint"></p>
+          <p id="dohResult" class="note" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <!-- Rules ------------------------------------------------------------------->
+      <section id="rules" class="page" aria-labelledby="rulesH" hidden>
+        <h2 id="rulesH" data-i18n="navRules"></h2>
+        <p class="lead muted" data-i18n="rulesLead"></p>
+        <div class="grid2">
+          <div class="card stack">
+            <h3 data-i18n="rulesAlwaysTitle"></h3>
+            <p class="muted small" data-i18n="rulesAlwaysHelp"></p>
+            <form id="alwaysForm" class="row">
+              <label class="field grow"><span data-i18n="domain"></span><input id="alwaysInput" data-i18n-attr="placeholder:domainPlaceholder" /></label>
+              <button class="btn" type="submit" data-i18n="add"></button>
+            </form>
+            <ul id="alwaysList" class="rlist"></ul>
+          </div>
+          <div class="card stack">
+            <h3 data-i18n="rulesNeverTitle"></h3>
+            <p class="muted small" data-i18n="rulesNeverHelp"></p>
+            <form id="neverForm" class="row">
+              <label class="field grow"><span data-i18n="domain"></span><input id="neverInput" data-i18n-attr="placeholder:domainPlaceholder" /></label>
+              <button class="btn" type="submit" data-i18n="add"></button>
+            </form>
+            <ul id="neverList" class="rlist"></ul>
+          </div>
+        </div>
+        <p id="rulesResult" class="note" role="status" aria-live="polite"></p>
+      </section>
+
+      <!-- Settings ---------------------------------------------------------------->
+      <section id="settings" class="page" aria-labelledby="settingsH" hidden>
+        <h2 id="settingsH" data-i18n="navSettings"></h2>
+        <div class="card stack">
+          <h3 data-i18n="routingTitle"></h3>
+          <fieldset class="seg" id="modeSeg">
+            <legend data-i18n="modeLabel"></legend>
+            <label><input type="radio" name="mode" value="smart" /><span data-i18n="modeSmart"></span></label>
+            <label><input type="radio" name="mode" value="full" /><span data-i18n="modeFull"></span></label>
+            <label><input type="radio" name="mode" value="off" /><span data-i18n="modeOff"></span></label>
+          </fieldset>
+          <p id="modeHelp" class="muted small"></p>
+          <label class="field"><span data-i18n="routeScope"></span>
+            <select id="routeScope">
+              <option value="registrable" data-i18n="routeScopeRegistrable"></option>
+              <option value="host" data-i18n="routeScopeHost"></option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="bundles" /><span><span data-i18n="bundles"></span><span class="hint muted small" data-i18n="bundlesHint"></span></span></label>
+          <label class="check"><input type="checkbox" id="autoRoute" /><span><span data-i18n="autoRoute"></span><span class="hint muted small" data-i18n="autoRouteHint"></span></span></label>
+          <label class="check"><input type="checkbox" id="autoReload" /><span><span data-i18n="autoReload"></span><span class="hint muted small" data-i18n="autoReloadHint"></span></span></label>
+        </div>
+        <div class="card stack">
+          <h3 data-i18n="detectionTitle"></h3>
+          <label class="check"><input type="checkbox" id="detectionEnabled" /><span><span data-i18n="detectionEnabled"></span><span class="hint muted small" data-i18n="detectionEnabledHint"></span></span></label>
+          <label class="check"><input type="checkbox" id="deepDetection" /><span><span data-i18n="deepDetection"></span><span class="hint muted small" data-i18n="deepDetectionHint"></span></span></label>
+          <div id="deepAccessRow" class="row center" hidden>
+            <span class="muted small" data-i18n="deepNeedsAccess"></span>
+            <button id="grantDeep" class="btn small" type="button" data-i18n="allow"></button>
+          </div>
+        </div>
+        <div class="card stack">
+          <h3 data-i18n="privacyTitle"></h3>
+          <label class="check"><input type="checkbox" id="webrtcProtection" /><span><span data-i18n="webrtcProtection"></span><span class="hint muted small" data-i18n="webrtcProtectionHint"></span></span></label>
+          <p id="webrtcResult" class="note" role="status" aria-live="polite"></p>
+        </div>
+        <div class="card stack">
+          <h3 data-i18n="backupTitle"></h3>
+          <p class="muted small" data-i18n="backupHelp"></p>
+          <label class="check"><input type="checkbox" id="includeSecrets" /><span data-i18n="includePasswords"></span></label>
+          <div class="actions">
+            <button id="exportBtn" class="btn" type="button" data-i18n="exportBackup"></button>
+            <button id="importBtn" class="btn" type="button" data-i18n="importBackup"></button>
+            <input id="importFile" type="file" accept="application/json,.json" hidden />
+          </div>
+          <p id="backupResult" class="note" role="status" aria-live="polite"></p>
+        </div>
+        <div class="card stack danger-zone">
+          <h3 data-i18n="resetTitle"></h3>
+          <p class="muted small" data-i18n="resetHelp"></p>
+          <div><button id="resetBtn" class="btn danger" type="button" data-i18n="resetAll"></button></div>
+        </div>
+      </section>
+
+      <!-- Diagnostics ------------------------------------------------------------->
+      <section id="diagnostics" class="page" aria-labelledby="diagH" hidden>
+        <h2 id="diagH" data-i18n="navDiagnostics"></h2>
+        <div class="card stack">
+          <h3 data-i18n="statusTitle"></h3>
+          <dl id="statusList" class="kv"></dl>
+        </div>
+        <div class="card stack">
+          <div class="card-head">
+            <h3 data-i18n="timelineTitle"></h3>
+            <label class="field inline"><span data-i18n="show"></span><select id="eventFilter"></select></label>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+          <p id="timelineEmpty" class="muted small" data-i18n="timelineEmpty" hidden></p>
+        </div>
+        <div class="card stack">
+          <h3 data-i18n="reportTitle"></h3>
+          <p class="muted small" data-i18n="reportHelp"></p>
+          <label class="check"><input type="checkbox" id="redactDomains" checked /><span data-i18n="redactDomains"></span></label>
+          <div><button id="reportBtn" class="btn" type="button" data-i18n="downloadReport"></button></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

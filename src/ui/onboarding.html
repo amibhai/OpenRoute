@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n="welcomeTitle"></title>
+  <link rel="stylesheet" href="shared/base.css" />
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body class="onboarding">
+  <main class="wrap">
+    <header class="hero">
+      <img src="../../icons/icon128.png" alt="" width="56" height="56" />
+      <div>
+        <h1 data-i18n="extShortName"></h1>
+        <p class="sub" data-i18n="welcomeSub"></p>
+      </div>
+    </header>
+
+    <!-- Shown only when something still needs the user's OK (e.g. on Firefox). -->
+    <section id="accessCard" class="card step" hidden aria-labelledby="accessTitle">
+      <span class="num" aria-hidden="true">✓</span>
+      <div class="stack">
+        <h2 id="accessTitle" data-i18n="onbPermsTitle"></h2>
+        <p data-i18n="onbPermsHelp"></p>
+        <ul class="checklist">
+          <li id="rowHost" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbHostTitle"></b> <span data-i18n="onbHostHelp"></span></div>
+            <button id="grantHost" class="btn small" type="button" data-i18n="allow"></button>
+          </li>
+          <li id="rowConsent" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbConsentTitle"></b> <span data-i18n="onbConsentHelp"></span></div>
+            <button id="grantConsent" class="btn small" type="button" data-i18n="allow"></button>
+          </li>
+          <li id="rowPrivate" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbPrivateTitle"></b> <span data-i18n="onbPrivateHelp"></span></div>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card step" aria-labelledby="step1Title">
+      <span class="num" aria-hidden="true">1</span>
+      <div class="stack">
+        <h2 id="step1Title" data-i18n="onbStep1Title"></h2>
+        <p id="step1Text"></p>
+        <div><button id="openDns" class="btn primary" type="button" data-i18n="openSecureDns"></button></div>
+        <ol id="dnsSteps" class="hint" hidden></ol>
+      </div>
+    </section>
+
+    <section class="card step" aria-labelledby="step2Title">
+      <span class="num" aria-hidden="true">2</span>
+      <div class="stack">
+        <h2 id="step2Title" data-i18n="onbStep2Title"></h2>
+        <p data-i18n="onbStep2Text"></p>
+        <ul class="ladder">
+          <li><b data-i18n="rungDoh"></b> <span data-i18n="onbLadderDns"></span></li>
+          <li><b data-i18n="rungEch"></b> <span data-i18n="onbLadderEch"></span></li>
+          <li><b data-i18n="onbLadderDpiName"></b> <span data-i18n="onbLadderDpi"></span></li>
+          <li><b data-i18n="onbLadderProxyName"></b> <span data-i18n="onbLadderProxy"></span></li>
+          <li><b data-i18n="onbLadderTorName"></b> <span data-i18n="onbLadderTor"></span></li>
+          <li><b data-i18n="rungFallback"></b> <span data-i18n="onbLadderReadOnly"></span></li>
+        </ul>
+        <p class="hint" data-i18n="onbOnlyBlocked"></p>
+      </div>
+    </section>
+
+    <section class="card step" aria-labelledby="step3Title">
+      <span class="num" aria-hidden="true">3</span>
+      <div class="stack">
+        <h2 id="step3Title" data-i18n="onbStep3Title"></h2>
+        <p data-i18n="onbStep3Text"></p>
+        <div class="actions">
+          <button id="discover" class="btn" type="button" data-i18n="findLocalProxies"></button>
+          <button id="openTransports" class="btn" type="button" data-i18n="openDashboardTransports"></button>
+        </div>
+        <p id="discoverResult" class="note" role="status" aria-live="polite"></p>
+        <p id="companionLine" class="hint"></p>
+      </div>
+    </section>
+
+    <section class="reality" aria-labelledby="honestTitle">
+      <h2 id="honestTitle" data-i18n="onbHonestTitle"></h2>
+      <p data-i18n="onbHonestText"></p>
+    </section>
+
+    <footer class="actions end">
+      <button id="done" class="btn primary" type="button" data-i18n="onbDone"></button>
+      <span class="muted small" data-i18n="onbReopen"></span>
+    </footer>
+  </main>
+  <script type="module" src="onboarding.js"></script>
+</body>
+</html>

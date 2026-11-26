@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Rules in $FAKE_DIR/<iptables|ip6tables>-rules. With $FAKE_DIR/iptables-reject
+# the INPUT chain ends in a REJECT, the way Oracle Cloud's images ship.
+name=${0##*/}
+echo "$name $*" >>"$FAKE_DIR/log"
+rules=$FAKE_DIR/$name-rules
+touch "$rules"
+op=$1
+shift 2 # the operation and "INPUT"
+case $op in
+  -S)
+    echo "-P INPUT ACCEPT"
+    sed 's/^/-A INPUT /' "$rules"
+    [ ! -f "$FAKE_DIR/iptables-reject" ] || echo "-A INPUT -j REJECT --reject-with icmp-host-prohibited"
+    ;;
+  -C) grep -qxF -- "$*" "$rules" ;;
+  -I) echo "$*" >>"$rules" ;;
+  -D)
+    grep -qxF -- "$*" "$rules" || exit 1
+    { grep -vxF -- "$*" "$rules" || true; } >"$rules.new"
+    mv "$rules.new" "$rules"
+    ;;
+esac

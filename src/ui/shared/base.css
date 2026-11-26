@@ -1,0 +1,191 @@
+/* OpenRoute design system: tokens + components shared by every page.
+   Colors meet WCAG AA (4.5:1 for text) in light and dark; the e2e suite
+   measures it. Layout uses logical properties, so RTL languages just work. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f5f6f8;
+  --surface-2: #eceef2;
+  --border: #d5d9e0;
+  --fg: #15181d;
+  --muted: #555e6b;
+  --primary: #1d4ed8;
+  --primary-bg: #1d4ed8;
+  --primary-on: #ffffff;
+  --focus: #1d4ed8;
+  --good: #136c42;
+  --good-bg: #e3f3e9;
+  --warn: #8a4f00;
+  --warn-bg: #fdf0d8;
+  --bad: #b3261e;
+  --bad-bg: #fde8e6;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121417;
+    --surface: #1b1e23;
+    --surface-2: #262a31;
+    --border: #3a404a;
+    --fg: #e9ebef;
+    --muted: #a7afbb;
+    --primary: #8ab4ff;
+    --primary-bg: #8ab4ff;
+    --primary-on: #0b1220;
+    --focus: #8ab4ff;
+    --good: #6fdc9c;
+    --good-bg: #12301f;
+    --warn: #f5c451;
+    --warn-bg: #33270b;
+    --bad: #ff9b93;
+    --bad-bg: #3b1513;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font: 13px/1.45 var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  text-align: start;
+}
+
+h1, h2, h3 { line-height: 1.25; margin: 0; }
+p { margin: 0; }
+a { color: var(--primary); }
+code {
+  font: 0.92em var(--mono);
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 11.5px; }
+.mono { font-family: var(--mono); }
+.wrap-anywhere { overflow-wrap: anywhere; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 28px; padding: 4px 11px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg); color: var(--fg);
+  font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.btn:hover { border-color: var(--primary); }
+.btn[disabled] { opacity: 0.65; cursor: default; }
+.btn.primary { background: var(--primary-bg); color: var(--primary-on); border-color: var(--primary-bg); font-weight: 600; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--primary); }
+.btn.ghost:hover { border-color: var(--border); }
+.btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+.btn.small { min-height: 24px; padding: 2px 9px; font-size: 12px; }
+.btn.block { width: 100%; }
+.icon-btn { min-width: 28px; padding: 2px 6px; font-size: 15px; line-height: 1; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---- chips, dots, banners ---- */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted); white-space: nowrap;
+}
+.chip.good { background: var(--good-bg); color: var(--good); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.bad { background: var(--bad-bg); color: var(--bad); }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.good { background: var(--good); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+.dot.muted { background: var(--border); }
+
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; font-size: 12px;
+  background: var(--warn-bg); color: var(--warn);
+}
+.banner.bad { background: var(--bad-bg); color: var(--bad); }
+.banner.good { background: var(--good-bg); color: var(--good); }
+.banner .btn { flex: none; }
+
+.note { font-size: 12px; }
+.note.bad, .error { color: var(--bad); }
+.note.good { color: var(--good); }
+
+/* ---- form controls ---- */
+input[type="text"], input[type="search"], input[type="url"], input[type="password"],
+input:not([type]), select, textarea {
+  min-height: 30px; min-width: 0;
+  padding: 4px 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 7px;
+  font: inherit; font-size: 12.5px;
+}
+textarea { width: 100%; resize: vertical; font-family: var(--mono); font-size: 12px; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--primary-bg); width: 15px; height: 15px; margin: 0; flex: none; }
+
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field > span { font-size: 12px; font-weight: 600; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.row > .grow { flex: 1 1 140px; }
+
+.check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.check input { margin-top: 2px; }
+.check .hint { display: block; }
+
+/* Segmented control: a radio group that looks like buttons. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px; margin: 0; gap: 2px; background: var(--surface); }
+.seg legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.seg span { display: block; padding: 2px 9px; border-radius: 6px; font-size: 12px; color: var(--muted); }
+.seg input:checked + span { background: var(--primary-bg); color: var(--primary-on); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+details > summary { cursor: pointer; }
+details > summary::marker { color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+/* Firefox for Android shows pages and the popup full-screen: give touch
+   targets room. */
+@media (pointer: coarse) {
+  body { font-size: 15px; }
+  .btn { min-height: 40px; padding: 8px 14px; font-size: 14px; }
+  .btn.small { min-height: 36px; font-size: 13.5px; }
+  input[type="text"], input[type="search"], input[type="url"], input[type="password"], input:not([type]), select, textarea {
+    min-height: 40px; font-size: 15px;
+  }
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+  .seg span { padding: 8px 12px; font-size: 14px; }
+}

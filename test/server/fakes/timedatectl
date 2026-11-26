@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "timedatectl $*" >>"$FAKE_DIR/log"
+[ "$1" != show ] || echo "${FAKE_NTP:-yes}"

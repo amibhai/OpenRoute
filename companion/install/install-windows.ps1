@@ -1,49 +1,43 @@
-# Installs the OpenRoute native companion for Chrome/Edge on Windows.
+# Installs the OpenRoute companion for every supported browser on this PC
+# (Chrome, Edge, Brave, Vivaldi, Opera, Chromium, Yandex, Firefox and forks).
+# Per-user, no administrator rights needed.
 #
-#   .\install-windows.ps1 -ExtId <your-unpacked-extension-id> [-SingBox C:\path\sing-box.exe]
+#   .\install-windows.ps1 [-SingBox C:\path\sing-box.exe] [-ExtensionId <id>[,<id>]]
 #
-# Find <ExtId> at chrome://extensions (Developer mode) under the OpenRoute card.
+# Uses a prebuilt openroute-companion.exe next to this script if present;
+# otherwise builds from source (needs Go 1.21+). -ExtensionId is only needed
+# for store builds — the unpacked extension's ID is allowed out of the box.
 param(
-  [Parameter(Mandatory = $true)][string]$ExtId,
-  [string]$SingBox = ""
+  [string]$SingBox = "",
+  [string]$ExtensionId = ""
 )
 $ErrorActionPreference = "Stop"
 
-$companion = Split-Path -Parent $PSScriptRoot          # ...\companion
-$bin = Join-Path $companion "bin\openroute-host.exe"
+$companion = Split-Path -Parent $PSScriptRoot
+$prebuilt = Join-Path $PSScriptRoot "openroute-companion.exe"
+$bin = Join-Path $companion "bin\openroute-companion.exe"
 
-Write-Host "Building companion (go build)..."
-New-Item -ItemType Directory -Force -Path (Split-Path $bin) | Out-Null
-Push-Location $companion
-try { & go build -o $bin . ; if ($LASTEXITCODE -ne 0) { throw "go build failed" } }
-finally { Pop-Location }
+if (Test-Path $prebuilt) {
+  $bin = $prebuilt
+} else {
+  $go = Get-Command go -ErrorAction SilentlyContinue
+  if (-not $go) { throw "Go isn't installed and no prebuilt openroute-companion.exe is next to this script. Get a release build, or install Go from https://go.dev/dl/" }
+  Write-Host "Building the companion (go build)..."
+  New-Item -ItemType Directory -Force -Path (Split-Path $bin) | Out-Null
+  Push-Location $companion
+  try { & $go.Source build -trimpath -ldflags "-s -w" -o $bin . ; if ($LASTEXITCODE -ne 0) { throw "go build failed" } }
+  finally { Pop-Location }
+}
 
-$dataDir = Join-Path $env:APPDATA "OpenRoute"
-New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 if ($SingBox -ne "") {
+  $dataDir = Join-Path $env:APPDATA "OpenRoute"
+  New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
   Copy-Item $SingBox (Join-Path $dataDir "sing-box.exe") -Force
-  Write-Host "Bundled sing-box from $SingBox"
+  Write-Host "Using sing-box from $SingBox"
 }
 
-$manifest = [ordered]@{
-  name            = "com.openroute.host"
-  description     = "OpenRoute native companion"
-  path            = $bin
-  type            = "stdio"
-  allowed_origins = @("chrome-extension://$ExtId/")
-} | ConvertTo-Json -Depth 4
-$manifestPath = Join-Path $dataDir "com.openroute.host.json"
-$manifest | Set-Content -Path $manifestPath -Encoding utf8
-
-# Register the host for Chrome and Edge (per-user, no admin needed).
-foreach ($root in @(
-    "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.openroute.host",
-    "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.openroute.host")) {
-  New-Item -Path $root -Force | Out-Null
-  Set-ItemProperty -Path $root -Name "(default)" -Value $manifestPath
-}
-
-Write-Host "Installed."
-Write-Host "  binary:   $bin"
-Write-Host "  manifest: $manifestPath"
-Write-Host "Reload the extension, open the popup — companion should read 'connected'."
+$installArgs = @("install")
+if ($ExtensionId -ne "") { $installArgs += @("--extension-id", $ExtensionId) }
+& $bin @installArgs
+if ($LASTEXITCODE -ne 0) { throw "install failed" }
+& $bin doctor

@@ -1,51 +1,48 @@
 // OpenRoute native companion.
 //
-// A Chrome Native Messaging host that gives the extension the transports a
-// browser can't run on its own. It speaks the length-prefixed NM protocol on
-// stdin/stdout and drives a local `sing-box` subprocess (Shadowsocks-2022,
-// VLESS/Reality, …) exposing a SOCKS proxy on 127.0.0.1 that the extension's
-// split-tunnel PAC routes blocked domains through.
+// One binary, four roles:
 //
-// std-lib only, so `go build` works with no network/module fetch. The heavy
-// transport crypto lives in sing-box (audited), which this process orchestrates
-// rather than reimplements.
+//	(no command)  native-messaging host — what the browser launches; a thin
+//	              forwarder to the daemon (starts it when needed)
+//	daemon        the supervisor that owns sing-box/tor and the desired state
+//	install       registers the host with every installed browser (no admin)
+//	uninstall     undoes that
+//	doctor        a self-check
+//
+// Standard library only, so `go build` needs no network. The transport crypto
+// lives in sing-box and tor, which this program orchestrates rather than
+// reimplements.
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
-	"path/filepath"
 )
 
-const version = "0.1.0"
+var version = "1.0.0" // release builds set it with -ldflags "-X main.version=…"
 
 func main() {
-	dir := dataDir()
-	_ = os.MkdirAll(dir, 0o700)
-
-	// stdout is the NM channel — logs MUST go elsewhere or they corrupt it.
-	if lf, err := os.OpenFile(filepath.Join(dir, "companion.log"),
-		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-		log.SetOutput(lf)
-		defer lf.Close()
+	cmd := ""
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
 	}
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.Printf("OpenRoute companion %s starting (data=%s)", version, dir)
-
-	mgr := NewManager(dir)
-	// NOTE: we deliberately do NOT stop sing-box when this host exits — Chrome
-	// tears the host down after each reply, and the tunnel must outlive it.
-
-	for {
-		msg, err := readMessage(os.Stdin)
-		if err != nil {
-			log.Printf("read loop end: %v", err)
-			return // stdin closed → Chrome disconnected → exit
-		}
-		resp := dispatch(mgr, msg)
-		if err := writeMessage(os.Stdout, resp); err != nil {
-			log.Printf("write error: %v", err)
-			return
-		}
+	switch cmd {
+	case "daemon":
+		os.Exit(runDaemon(os.Args[2:]))
+	case "install":
+		os.Exit(runInstall(os.Args[2:]))
+	case "uninstall":
+		os.Exit(runUninstall(os.Args[2:]))
+	case "doctor":
+		os.Exit(runDoctor(os.Args[2:]))
+	case "version", "--version", "-v":
+		fmt.Println("openroute-companion", version)
+	case "help", "--help", "-h":
+		fmt.Println("usage: openroute-companion [install [--extension-id ID,…] | uninstall | doctor | daemon | version]")
+		fmt.Println("Run with no command, it acts as the browser's native-messaging host.")
+	default:
+		// Browsers launch us with the caller's origin (Chromium) or the
+		// manifest path + add-on id (Firefox).
+		os.Exit(runHost(os.Args[1:]))
 	}
 }

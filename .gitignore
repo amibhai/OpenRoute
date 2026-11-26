@@ -10,7 +10,6 @@ desktop.ini
 *~
 
 # Local tooling
-.claude/
 *.log
 
 # Packaged builds / signing keys — never commit these
@@ -21,7 +20,16 @@ desktop.ini
 # Companion build output
 companion/bin/
 openroute-host
+openroute-companion
 openroute-host.exe
+openroute-companion.exe
 
 # Packaged extension zips
 dist/
+
+# Dev tooling (downloaded toolchains, npm, test output)
+.tools/
+node_modules/
+test-results/
+coverage/
+.e2e-profile*/

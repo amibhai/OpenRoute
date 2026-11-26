@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n="extShortName"></title>
+  <link rel="stylesheet" href="shared/base.css" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body class="popup">
+  <header class="bar">
+    <img src="../../icons/icon32.png" alt="" width="20" height="20" />
+    <h1 data-i18n="extShortName"></h1>
+    <fieldset class="seg" id="mode">
+      <legend data-i18n="modeLabel"></legend>
+      <label><input type="radio" name="mode" value="smart" /><span data-i18n="modeSmart"></span></label>
+      <label><input type="radio" name="mode" value="full" /><span data-i18n="modeFull"></span></label>
+      <label><input type="radio" name="mode" value="off" /><span data-i18n="modeOff"></span></label>
+    </fieldset>
+    <button id="openOptions" class="btn ghost icon-btn" type="button" data-i18n-attr="aria-label:openDashboard, title:openDashboard">⚙</button>
+  </header>
+
+  <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+
+  <main>
+    <section id="tabCard" class="card tab" aria-labelledby="tabTitle">
+      <h2 id="tabTitle" class="eyebrow" data-i18n="thisSite"></h2>
+      <p id="tabHost" class="host wrap-anywhere"></p>
+      <p id="tabStatus" class="status"></p>
+      <p id="tabDetail" class="muted small"></p>
+      <div id="tabActions" class="actions"></div>
+      <p id="tabNote" class="note small" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card" aria-labelledby="transportsTitle">
+      <div class="card-head">
+        <h2 id="transportsTitle" class="eyebrow" data-i18n="transports"></h2>
+        <button id="discover" class="btn ghost small" type="button" data-i18n="findLocalProxies"></button>
+      </div>
+      <ul id="transportList" class="tlist"></ul>
+      <p id="transportEmpty" class="muted small" data-i18n="noTransports" hidden></p>
+      <p id="discoverResult" class="note small" role="status" aria-live="polite"></p>
+      <button id="manageTransports" class="btn ghost small" type="button" data-i18n="manageTransports"></button>
+    </section>
+
+    <section class="card" aria-labelledby="sitesTitle">
+      <div class="card-head">
+        <h2 id="sitesTitle" class="eyebrow"><span data-i18n="sites"></span> <span id="siteCount"></span></h2>
+        <button id="manageSites" class="btn ghost small" type="button" data-i18n="manageSites"></button>
+      </div>
+      <ul id="siteList" class="slist"></ul>
+      <p id="sitesEmpty" class="muted small" data-i18n="sitesEmpty" hidden></p>
+    </section>
+  </main>
+
+  <footer class="foot muted small" data-i18n="footerHonest"></footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,16 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "OpenRoute — Unblock & Route",
-  "version": "0.3.0",
-  "description": "Detects blocked sites, diagnoses how they're blocked, and auto-routes only those domains down a failover ladder (Secure DNS → proxy → Tor) at full speed. Free and open source.",
-  "minimum_chrome_version": "108",
+  "name": "__MSG_extName__",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAztt6deTpdm97NMtx6QBjcGuCUzGck8hdPR/+VluqxtcV0aYEDrDbXW0UVmEwbYxgW5L+m9GLGOSWWgNGvGDQ3mU3a07oiY0RVY7VnEt7648p4uFbUu8wEGDe1lrMfyS3UIkbG7duq8qDZwp8W0oYr2V3/Smjd9gG31H0Q875cksKlXMfPpLvmfl9Fg2cz5f5Midm9tecxwPcXSur9AJQxAeo5447TnNrIxcy25duGGYEONHIDh3H/SvsYvWF4SWiuWD8PchK+vCBodJD1mXAYqON9Kesgp9Da54cHv+5iuBNXNvXfYs6NX4Wgi7Utnu0wWvbzEalU7elNdUfpYa5KwIDAQAB",
+  "description": "__MSG_extDescription__",
+  "default_locale": "en",
+  "minimum_chrome_version": "116",
   "permissions": [
     "webNavigation",
     "storage",
-    "activeTab",
     "proxy",
     "alarms",
-    "nativeMessaging"
+    "nativeMessaging",
+    "webRequest",
+    "webRequestAuthProvider",
+    "activeTab",
+    "contextMenus"
+  ],
+  "optional_permissions": [
+    "privacy"
   ],
   "host_permissions": [
     "https://cloudflare-dns.com/*",
@@ -20,11 +28,23 @@
     "https://8.8.8.8/*",
     "https://8.8.4.4/*",
     "https://dns.quad9.net/*",
-    "https://9.9.9.9/*"
+    "https://9.9.9.9/*",
+    "https://149.112.112.112/*",
+    "https://unfiltered.adguard-dns.com/*",
+    "https://dns.mullvad.net/*",
+    "https://dns.nextdns.io/*",
+    "https://doh.dns.sb/*",
+    "https://185.222.222.222/*",
+    "http://connectivitycheck.gstatic.com/*",
+    "http://detectportal.firefox.com/*",
+    "http://captive.apple.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "src/background/index.js",
     "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -33,13 +53,28 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "OpenRoute",
+    "default_popup": "src/ui/popup.html",
+    "default_title": "__MSG_extName__",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
+    }
+  },
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "options_ui": {
+    "page": "src/ui/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "toggle-route": {
+      "suggested_key": {
+        "default": "Alt+Shift+O"
+      },
+      "description": "__MSG_commandToggleRoute__"
     }
   }
 }

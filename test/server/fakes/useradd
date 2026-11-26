@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "useradd $*" >>"$FAKE_DIR/log"
+for name; do :; done
+touch "$FAKE_DIR/user-$name"

@@ -1,0 +1,33 @@
+{
+  "name": "openroute",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Detects blocked sites, diagnoses how they're blocked, and routes only those domains down a failover ladder. Dev tooling only — the extension itself has zero runtime dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=spec \"test/unit/**/*.test.mjs\"",
+    "test:e2e": "node --test --test-concurrency=1 --test-reporter=spec \"test/e2e/**/*.test.mjs\"",
+    "lint": "eslint .",
+    "build": "node scripts/build.mjs",
+    "setup-tools": "node scripts/setup-tools.mjs",
+    "test:e2e:matrix": "node scripts/e2e-matrix.mjs",
+    "lint:firefox": "node scripts/build.mjs firefox --no-zip && web-ext lint --source-dir dist/firefox",
+    "test:live": "node --test --test-reporter=spec \"test/live/**/*.test.mjs\"",
+    "test:server": "node --test --test-concurrency=1 --test-reporter=spec \"test/server/**/*.test.mjs\"",
+    "test:companion": "node scripts/go.mjs",
+    "lint:sh": "node scripts/lint-sh.mjs",
+    "lint:ci": "node scripts/lint-ci.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "playwright": "^1.65.1",
+    "selenium-webdriver": "^4.51.0",
+    "web-ext": "^10.8.0"
+  }
+}

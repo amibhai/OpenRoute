@@ -1,0 +1,96 @@
+# Pushing a tag vX.Y.Z builds a draft GitHub release:
+#   - the extension: store packages (Chrome Web Store / Edge / Opera, and AMO)
+#     and the unpacked-install zip with the pinned extension ID;
+#   - the companion for six platforms, each archive holding the binary, its
+#     installer and README;
+#   - the server script;
+#   - SHA256SUMS over all of it, and SLSA build provenance for every file
+#     (verify with: gh attestation verify <file> --repo <owner>/<repo>).
+#
+# The tag must match the version in manifest.json and package.json. Builds
+# are reproducible: zips are deterministic and Go builds are -trimpath with
+# an empty build ID, so anyone can rebuild and compare checksums.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write     # create the draft release
+      id-token: write     # sign the provenance
+      attestations: write # store it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: The tag matches the versions in the tree
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(node -p 'require("./manifest.json").version')" = "$version"
+          test "$(node -p 'require("./package.json").version')" = "$version"
+          grep -q "^## \[$version\]" CHANGELOG.md
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Extension packages
+        run: |
+          node scripts/build.mjs chromium chromium-store firefox
+          mkdir -p release
+          cp dist/openroute-*-"$VERSION".zip release/
+
+      - name: Companion for every platform
+        run: |
+          export TZ=UTC # zip stores local times; fixed for reproducible archives
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*} arch=${target#*/}
+            name="openroute-companion-$VERSION-$os-$arch"
+            stage="$RUNNER_TEMP/$name"
+            mkdir -p "$stage"
+            exe=openroute-companion; [ "$os" = windows ] && exe=openroute-companion.exe
+            (cd companion && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -buildid= -X main.version=$VERSION" -o "$stage/$exe" .)
+            cp companion/README.md "$stage/"
+            if [ "$os" = windows ]; then
+              cp companion/install/install-windows.ps1 "$stage/"
+              (cd "$RUNNER_TEMP" && find "$name" -exec touch -d "@$SOURCE_DATE_EPOCH" {} + &&
+                find "$name" -type f | sort | zip -X -q "$GITHUB_WORKSPACE/release/$name.zip" -@)
+            else
+              cp companion/install/install-unix.sh "$stage/" && chmod 755 "$stage/install-unix.sh" "$stage/$exe"
+              tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+                -C "$RUNNER_TEMP" -cf - "$name" | gzip -n > "release/$name.tar.gz"
+            fi
+          done
+
+      - name: Server script and checksums
+        run: |
+          cp server/install-server.sh release/
+          (cd release && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
+
+      - name: Draft release with the changelog entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "OpenRoute $VERSION" --notes-file "$RUNNER_TEMP/notes.md" release/*

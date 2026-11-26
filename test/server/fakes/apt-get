@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# "Installs" sing-box by putting a wrapper for the real one on PATH.
+echo "apt-get $*" >>"$FAKE_DIR/log"
+case " $* " in
+  *" install "*" sing-box "*)
+    printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$REAL_SINGBOX" >"$FAKE_BIN_POSIX/sing-box"
+    chmod +x "$FAKE_BIN_POSIX/sing-box"
+    ;;
+  *" remove "*" sing-box "*) rm -f "$FAKE_BIN_POSIX/sing-box" ;;
+esac
+exit 0

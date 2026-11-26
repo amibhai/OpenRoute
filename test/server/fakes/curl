@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Offline unless told otherwise: FAKE_CURL=ip answers the what-is-my-IP
+# services (IPv4 only) with $FAKE_IP; FAKE_CURL=junk "downloads" garbage
+# into the -o file.
+echo "curl $*" >>"$FAKE_DIR/log"
+case ${FAKE_CURL:-offline} in
+  ip)
+    case " $* " in *" -4 "*)
+      echo "${FAKE_IP:-198.51.100.4}"
+      exit 0
+      ;;
+    esac
+    exit 7
+    ;;
+  junk)
+    out=''
+    while [ $# -gt 0 ]; do
+      [ "$1" != -o ] || out=$2
+      shift
+    done
+    [ -z "$out" ] || echo "not a tarball" >"$out"
+    ;;
+  *) exit 7 ;;
+esac
