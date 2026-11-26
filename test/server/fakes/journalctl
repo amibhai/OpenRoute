@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "journalctl $*" >>"$FAKE_DIR/log"
+echo "(fake journal: sing-box exited)"

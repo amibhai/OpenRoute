@@ -165,3 +165,71 @@ func TestRedaction(t *testing.T) {
 		t.Errorf("server address should stay visible: %q", out)
 	}
 }
+
+func TestCertificatePinning(t *testing.T) {
+	spki := "cf016e91c1f9a7f4227d0c6cab3053e39e05ac8a01f0f59c1ec77f3e38bcccb4" // hex, as the server script prints it
+	want := "zwFukcH5p/QifQxsqzBT454FrIoB8PWcHsd/Pji8zLQ="                       // what sing-box wants: std base64
+	base := "hysteria2://pw@203.0.113.9:28443/?sni=www.example.com&obfs=salamander&obfs-password=ob"
+
+	for name, q := range map[string]string{
+		"hex":             "&pinPublicKeySHA256=" + spki,
+		"hex-colons":      "&pinPublicKeySHA256=" + strings.ToUpper(spki[:2]+":"+spki[2:4]) + spki[4:],
+		"base64-escaped":  "&pinPublicKeySHA256=zwFukcH5p%2FQifQxsqzBT454FrIoB8PWcHsd%2FPji8zLQ%3D",
+		"base64url":       "&pinPublicKeySHA256=zwFukcH5p_QifQxsqzBT454FrIoB8PWcHsd_Pji8zLQ",
+		"with-insecure":   "&insecure=1&pinPublicKeySHA256=" + spki, // the pin replaces "insecure"
+		"plus-std-pin":    "&pinSHA256=e1af265121d7495daf474f95ea478fbe72e25517b50df7ed32bb2177ab53ff1f&pinPublicKeySHA256=" + spki,
+		"sing-box-naming": "&certificate_public_key_sha256=" + spki,
+	} {
+		o := mustParse(t, base+q).Object
+		tls := o["tls"].(map[string]any)
+		pins, _ := tls["certificate_public_key_sha256"].([]string)
+		if len(pins) != 1 || pins[0] != want {
+			t.Errorf("%s: pins = %v, want [%s]", name, tls["certificate_public_key_sha256"], want)
+		}
+		if _, insecure := tls["insecure"]; insecure {
+			t.Errorf("%s: a pinned link must not also turn verification off: %v", name, tls)
+		}
+	}
+
+	// Two pins for a key rollover.
+	o := mustParse(t, base+"&pinPublicKeySHA256="+spki+","+strings.Repeat("ab", 32)).Object
+	if pins := o["tls"].(map[string]any)["certificate_public_key_sha256"].([]string); len(pins) != 2 {
+		t.Errorf("rollover pins: %v", pins)
+	}
+	// Pins apply to every TLS-based link, not only Hysteria2.
+	o = mustParse(t, "trojan://pw@203.0.113.9:443?security=tls&sni=t.example&pinPublicKeySHA256="+spki).Object
+	if _, ok := o["tls"].(map[string]any)["certificate_public_key_sha256"]; !ok {
+		t.Errorf("trojan pin dropped: %v", o["tls"])
+	}
+
+	// insecure=1 + a whole-certificate pin sing-box can't check would mean no
+	// verification at all: refused, not silently downgraded.
+	if _, err := parseLink(base + "&insecure=1&pinSHA256=e1af265121d7495daf474f95ea478fbe72e25517b50df7ed32bb2177ab53ff1f"); err == nil || !strings.Contains(err.Error(), "pinPublicKeySHA256") {
+		t.Errorf("insecure + pinSHA256 must be refused with a way forward, got %v", err)
+	}
+	// An explicit insecure-only link stays the user's choice, as before.
+	if o := mustParse(t, base+"&insecure=1").Object; o["tls"].(map[string]any)["insecure"] != true {
+		t.Errorf("explicit insecure link changed: %v", o["tls"])
+	}
+	for _, bad := range []string{"nothex", strings.Repeat("ab", 31), "zwFukcH5p"} {
+		if _, err := parseLink(base + "&pinPublicKeySHA256=" + bad); err == nil {
+			t.Errorf("pin %q should be rejected", bad)
+		}
+	}
+}
+
+func TestPinnedLinksNeedSingBox113(t *testing.T) {
+	p := mustParse(t, "hysteria2://pw@203.0.113.9:28443/?sni=s.example&pinPublicKeySHA256="+strings.Repeat("ab", 32))
+	if err := requireFeatures("1.12.25", []Parsed{p}); err == nil || !strings.Contains(err.Error(), "1.13") {
+		t.Errorf("1.12 + pin: want an actionable error, got %v", err)
+	}
+	for _, v := range []string{"1.13.0", "1.14.4", "1.15.0-alpha.13"} {
+		if err := requireFeatures(v, []Parsed{p}); err != nil {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	plain := mustParse(t, "hysteria2://pw@203.0.113.9:28443/?sni=s.example")
+	if err := requireFeatures("1.12.0", []Parsed{plain}); err != nil {
+		t.Errorf("unpinned link on 1.12: %v", err)
+	}
+}

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+for link; do :; done
+echo "[QR code for a ${link%%://*} link]"

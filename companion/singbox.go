@@ -168,6 +168,19 @@ func buildSingBoxConfig(st *State, pool []Parsed, doh string, logPath string) ma
 	return cfg
 }
 
+// requireFeatures catches links that need a newer sing-box than the minimum,
+// with a reason the user can act on — `sing-box check` would only say
+// "unknown field".
+func requireFeatures(version string, pool []Parsed) error {
+	for _, p := range pool {
+		t, _ := p.Object["tls"].(map[string]any)
+		if _, pinned := t["certificate_public_key_sha256"]; pinned && !versionAtLeast(version, "1.13.0") {
+			return fmt.Errorf("this server's certificate is pinned (pinPublicKeySHA256), which needs sing-box 1.13 or newer; you have %s, so update sing-box", version)
+		}
+	}
+	return nil
+}
+
 func cloneMap(m map[string]any) map[string]any {
 	b, _ := json.Marshal(m)
 	var out map[string]any
@@ -203,6 +216,9 @@ func (s *SingBox) Apply(st *State, doh string) error {
 			}
 			pool = append(pool, p)
 		}
+	}
+	if err := requireFeatures(s.version, pool); err != nil {
+		return s.fail(err)
 	}
 	ports := []*int{&st.Ports.Clash}
 	if len(pool) > 0 {

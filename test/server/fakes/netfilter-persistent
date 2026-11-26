@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "netfilter-persistent $*" >>"$FAKE_DIR/log"
+touch "$FAKE_DIR/netfilter-saved"

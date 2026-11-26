@@ -16,7 +16,10 @@
     "setup-tools": "node scripts/setup-tools.mjs",
     "test:e2e:matrix": "node scripts/e2e-matrix.mjs",
     "lint:firefox": "node scripts/build.mjs firefox --no-zip && web-ext lint --source-dir dist/firefox",
-    "test:live": "node --test --test-reporter=spec \"test/live/**/*.test.mjs\""
+    "test:live": "node --test --test-reporter=spec \"test/live/**/*.test.mjs\"",
+    "test:server": "node --test --test-concurrency=1 --test-reporter=spec \"test/server/**/*.test.mjs\"",
+    "test:companion": "node scripts/go.mjs",
+    "lint:sh": "node scripts/lint-sh.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

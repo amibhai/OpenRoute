@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "userdel $*" >>"$FAKE_DIR/log"
+rm -f "$FAKE_DIR/user-$1"

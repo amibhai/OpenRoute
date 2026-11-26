@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Active while $FAKE_DIR/ufw-active exists; rules ("port/proto comment")
+# in $FAKE_DIR/ufw-rules. Output mimics ufw 0.36.
+echo "ufw $*" >>"$FAKE_DIR/log"
+rules=$FAKE_DIR/ufw-rules
+touch "$rules"
+case $1 in
+  status)
+    if [ ! -f "$FAKE_DIR/ufw-active" ]; then
+      echo "Status: inactive"
+      exit 0
+    fi
+    echo "Status: active"
+    echo
+    n=0
+    while read -r rule comment; do
+      n=$((n + 1))
+      if [ "${2:-}" = numbered ]; then
+        printf '[%2d] %-26s ALLOW IN    Anywhere                   # %s\n' "$n" "$rule" "$comment"
+      else
+        printf '%-26s ALLOW       Anywhere                   # %s\n' "$rule" "$comment"
+      fi
+    done <"$rules"
+    ;;
+  allow) grep -q "^$2 " "$rules" || echo "$2 ${4:-}" >>"$rules" ;;
+  --force) [ "$2" != delete ] || sed -i "${3}d" "$rules" ;;
+esac

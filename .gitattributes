@@ -7,3 +7,4 @@
 *.png binary
 *.ico binary
 *.zip binary
+test/server/fakes/* text eol=lf

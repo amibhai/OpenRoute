@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+echo "getent $*" >>"$FAKE_DIR/log"
+if [ "$1" = passwd ] && [ -f "$FAKE_DIR/user-$2" ]; then
+  echo "$2:x:999:999::/var/lib/$2:/usr/sbin/nologin"
+  exit 0
+fi
+exit 2

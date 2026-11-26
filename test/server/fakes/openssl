@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# s_client answers like a TLS 1.3 + HTTP/2 site unless
+# $FAKE_DIR/sni-fail-<name> exists; $FAKE_DIR/sni-delay-<name> holds a delay
+# in seconds. Everything else is the real openssl.
+[ "${1:-}" = s_client ] || exec "$REAL_OPENSSL" "$@"
+echo "openssl $*" >>"$FAKE_DIR/log"
+sni=''
+while [ $# -gt 0 ]; do
+  [ "$1" != -servername ] || sni=$2
+  shift
+done
+if [ -f "$FAKE_DIR/sni-fail-$sni" ]; then
+  echo "handshake failure"
+  exit 1
+fi
+[ ! -f "$FAKE_DIR/sni-delay-$sni" ] || sleep "$(cat "$FAKE_DIR/sni-delay-$sni")"
+cat <<OUT
+CONNECTED(00000003)
+---
+New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
+Protocol: TLSv1.3
+ALPN protocol: h2
+Verify return code: 0 (ok)
+OUT

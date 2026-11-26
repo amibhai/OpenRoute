@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Also serves as ip6tables-save (the harness copies it under that name).
+name=${0##*/}
+echo "$name $*" >>"$FAKE_DIR/log"
+sed 's/^/-A INPUT /' "$FAKE_DIR/${name%-save}-rules" 2>/dev/null || true

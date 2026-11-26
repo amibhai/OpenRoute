@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,7 +208,7 @@ func parseSS(link string) (Parsed, error) {
 
 // ---- TLS / transports shared by vless, vmess, trojan --------------------------
 
-func tlsFrom(q url.Values, host string, reality bool) map[string]any {
+func tlsFrom(q url.Values, host string, reality bool) (map[string]any, error) {
 	t := map[string]any{"enabled": true, "server_name": firstNonEmpty(q.Get("sni"), q.Get("peer"), host)}
 	if alpn := q.Get("alpn"); alpn != "" {
 		t["alpn"] = strings.Split(alpn, ",")
@@ -232,8 +233,60 @@ func tlsFrom(q url.Values, host string, reality bool) map[string]any {
 		}
 		t["reality"] = r
 	}
-	return t
+	if err := applyPins(t, q); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
+
+// applyPins maps certificate pins onto sing-box's TLS options.
+//
+// pinPublicKeySHA256 (hex or base64; several comma-separated for a key
+// rollover) is what OpenRoute's server script prints for its self-signed
+// Hysteria2 certificate. It becomes certificate_public_key_sha256 (sing-box
+// 1.13+), which sing-box checks *instead of* CA validation — verified
+// against the real binary: the right pin connects, a wrong pin and no pin
+// are both refused — so no "insecure" is needed or kept.
+//
+// The standard Hysteria pinSHA256 hashes the whole certificate, which no
+// stable sing-box can check. Links usually pair it with insecure=1, and
+// honoring that would mean no verification at all, so that combination is
+// refused instead of silently downgraded.
+func applyPins(t map[string]any, q url.Values) error {
+	if raw := firstNonEmpty(q.Get("pinPublicKeySHA256"), q.Get("certificate_public_key_sha256")); raw != "" {
+		var pins []string
+		for _, p := range splitList(raw) {
+			b, err := decodePin(p)
+			if err != nil {
+				return fmt.Errorf("pinPublicKeySHA256: %w", err)
+			}
+			pins = append(pins, base64.StdEncoding.EncodeToString(b))
+		}
+		t["certificate_public_key_sha256"] = pins
+		delete(t, "insecure") // the pin is the verification
+		return nil
+	}
+	if t["insecure"] == true && q.Get("pinSHA256") != "" {
+		return errors.New("this link turns certificate checks off and relies on pinSHA256 (a whole-certificate fingerprint), which sing-box can't verify; ask for the public-key pin (pinPublicKeySHA256, which OpenRoute's server script prints) or use a server with a real certificate")
+	}
+	return nil
+}
+
+// decodePin accepts a SHA-256 as hex (colons allowed, as openssl prints
+// fingerprints) or base64 in any of its spellings.
+func decodePin(s string) ([]byte, error) {
+	if h := strings.ReplaceAll(strings.TrimSpace(s), ":", ""); len(h) == 64 {
+		if b, err := hex.DecodeString(h); err == nil {
+			return b, nil
+		}
+	}
+	if b, ok := b64(s); ok && len(b) == sha256Len {
+		return []byte(b), nil
+	}
+	return nil, fmt.Errorf("%q is not a SHA-256 hash (hex or base64)", s)
+}
+
+const sha256Len = 32
 
 func transportFrom(kind string, q url.Values, hostHeader, path string) (map[string]any, error) {
 	switch kind {
@@ -309,12 +362,16 @@ func parseVLESS(link string) (Parsed, error) {
 	}
 	switch q.Get("security") {
 	case "tls", "xtls":
-		out["tls"] = tlsFrom(q, host, false)
+		if out["tls"], err = tlsFrom(q, host, false); err != nil {
+			return Parsed{}, err
+		}
 	case "reality":
 		if q.Get("pbk") == "" {
 			return Parsed{}, errors.New("reality needs pbk (the server's public key)")
 		}
-		out["tls"] = tlsFrom(q, host, true)
+		if out["tls"], err = tlsFrom(q, host, true); err != nil {
+			return Parsed{}, err
+		}
 	case "", "none":
 	default:
 		return Parsed{}, fmt.Errorf("unknown security %q", q.Get("security"))
@@ -370,7 +427,9 @@ func parseVMess(link string) (Parsed, error) {
 		out["transport"] = tr
 	}
 	if str("tls") == "tls" {
-		out["tls"] = tlsFrom(q, firstNonEmpty(str("host"), host), false)
+		if out["tls"], err = tlsFrom(q, firstNonEmpty(str("host"), host), false); err != nil {
+			return Parsed{}, err
+		}
 	}
 	return Parsed{Object: out, Label: str("ps")}, nil
 }
@@ -400,7 +459,9 @@ func parseTrojan(link string) (Parsed, error) {
 		out["transport"] = tr
 	}
 	if q.Get("security") != "none" {
-		out["tls"] = tlsFrom(q, host, q.Get("security") == "reality")
+		if out["tls"], err = tlsFrom(q, host, q.Get("security") == "reality"); err != nil {
+			return Parsed{}, err
+		}
 	}
 	return Parsed{Object: out}, nil
 }
@@ -451,7 +512,10 @@ func parseHysteria2(link string) (Parsed, error) {
 		}
 		out["obfs"] = map[string]any{"type": "salamander", "password": q.Get("obfs-password")}
 	}
-	t := tlsFrom(q, host, false)
+	t, err := tlsFrom(q, host, false)
+	if err != nil {
+		return Parsed{}, err
+	}
 	if _, ok := t["alpn"]; !ok {
 		t["alpn"] = []string{"h3"}
 	}
@@ -485,7 +549,10 @@ func parseTUIC(link string) (Parsed, error) {
 	if q.Get("allow_insecure") == "1" {
 		q.Set("insecure", "1")
 	}
-	t := tlsFrom(q, host, false)
+	t, err := tlsFrom(q, host, false)
+	if err != nil {
+		return Parsed{}, err
+	}
 	if _, ok := t["alpn"]; !ok {
 		t["alpn"] = []string{"h3"}
 	}

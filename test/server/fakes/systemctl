@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# A unit is "active" while $FAKE_DIR/active-<unit> exists; starting fails
+# when $FAKE_DIR/fail-start-<unit> exists.
+echo "systemctl $*" >>"$FAKE_DIR/log"
+cmd=$1
+shift
+case $cmd in
+  is-active)
+    [ "${1:-}" != --quiet ] || shift
+    [ -f "$FAKE_DIR/active-$1" ]
+    exit
+    ;;
+  restart | start)
+    [ ! -f "$FAKE_DIR/fail-start-$1" ] || exit 1
+    touch "$FAKE_DIR/active-$1"
+    ;;
+  stop) rm -f "$FAKE_DIR/active-$1" ;;
+  disable)
+    if [ "$1" = --now ]; then
+      shift
+      [ -f "$FAKE_DIR/active-$1" ] || exit 1
+      rm -f "$FAKE_DIR/active-$1"
+    fi
+    ;;
+esac
+exit 0

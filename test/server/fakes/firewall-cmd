@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Running while $FAKE_DIR/firewalld-active exists; open ports in
+# $FAKE_DIR/firewalld-ports.
+echo "firewall-cmd $*" >>"$FAKE_DIR/log"
+ports=$FAKE_DIR/firewalld-ports
+touch "$ports"
+for a; do
+  case $a in
+    --state)
+      if [ ! -f "$FAKE_DIR/firewalld-active" ]; then
+        echo "not running"
+        exit 252
+      fi
+      echo running
+      ;;
+    --add-port=*) grep -qx "${a#--add-port=}" "$ports" || echo "${a#--add-port=}" >>"$ports" ;;
+    --remove-port=*)
+      { grep -vx "${a#--remove-port=}" "$ports" || true; } >"$ports.new"
+      mv "$ports.new" "$ports"
+      ;;
+    --list-ports) tr '\n' ' ' <"$ports" && echo ;;
+  esac
+done

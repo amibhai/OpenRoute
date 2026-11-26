@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Lists $FAKE_DIR/busy ("proto port process" lines: someone else's
+# listeners) and, while the service is active, every port in its config.
+echo "ss $*" >>"$FAKE_DIR/log"
+echo "Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process"
+if [ -f "$FAKE_DIR/busy" ]; then
+  while read -r proto port proc; do
+    echo "$proto LISTEN 0 4096 0.0.0.0:$port 0.0.0.0:* users:((\"$proc\",pid=4242,fd=6))"
+  done <"$FAKE_DIR/busy"
+fi
+config=$OPENROUTE_ROOT/etc/openroute-server/config.json
+if [ -f "$FAKE_DIR/active-openroute-server" ] && [ -f "$config" ]; then
+  sed -n 's/.*"listen_port": \([0-9]*\).*/\1/p' "$config" | while read -r p; do
+    echo "tcp LISTEN 0 4096 *:$p *:*"
+    echo "udp UNCONN 0 0 *:$p *:*"
+  done
+fi

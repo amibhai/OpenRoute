@@ -145,7 +145,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2);
   const noZip = args.includes("--no-zip");
   const names = args.filter((a) => !a.startsWith("--"));
-  const targets = names.length ? names : Object.keys(TARGETS);
+  const targets = names.length && !names.includes("all") ? names : Object.keys(TARGETS);
   mkdirSync(DIST, { recursive: true });
   console.log(`Building OpenRoute ${base.version}`);
   const results = [];

@@ -81,6 +81,19 @@ sing-box's own documentation says this is for **simple** filters, not sophistica
 Plugin lines and built-in bridges come from the installed Tor's own
 `pt_config.json`. Failing that, the companion uses a bundled snapshot or a fresh copy from Tor's Moat API (`refreshBridges`, optionally fetched *through* another transport when bridges.torproject.org is blocked).
 
+## Self-signed servers: certificate pinning
+
+A link can carry `pinPublicKeySHA256=<sha256 of the server certificate's public key>`, in hex or base64.
+OpenRoute's server script prints this for its Hysteria2 certificate, and it works for any TLS-based link.
+
+The companion turns it into sing-box's `certificate_public_key_sha256`. sing-box then checks that pin
+*instead of* a CA, so no `insecure` is involved. Tested against the real binary: the right pin connects,
+while a wrong pin and no pin are both refused. This needs sing-box 1.13 or newer, and the companion says so
+on older versions.
+
+The standard Hysteria `pinSHA256` fingerprints the whole certificate, which no stable sing-box can check. A
+link that pairs it with `insecure=1` is refused rather than silently connected without any verification.
+
 ## Protocol
 
 Messages are native-messaging JSON. Every reply carries `ok`, and failures add an `error` with the reason, never a secret.
@@ -101,8 +114,8 @@ Messages are native-messaging JSON. Every reply carries `ok`, and failures add a
 ## Tests
 
 ```sh
-node scripts/setup-tools.mjs     # Go, sing-box 1.12.x + latest, Tor Expert Bundle (checksum-verified, into .tools/)
-cd companion && go vet ./... && go test ./...
+npm run setup-tools              # Go, sing-box 1.12.x + latest, Tor Expert Bundle… (checksum-verified, into .tools/)
+npm run test:companion           # go vet + go test with that toolchain (or: cd companion && go test ./...)
 ```
 
 The suite checks:
@@ -111,7 +124,10 @@ The suite checks:
 - **torrc:** every Tor mode passes the **real `tor --verify-config`**.
 - **Full chain:** browser-style host → daemon → sing-box → a real Shadowsocks-2022 server → a site. A negative control (server down, so the request must fail) proves the traffic really went through the tunnel.
 - **Supervisor:** crash-loop give-up, plus orphan cleanup that never kills a reused PID.
-- **Share-link parsing**, including the formats the old parser rejected.
+- **Share-link parsing**, including the formats the old parser rejected, and certificate pins.
+- **The server script, end to end.** `server/install-server.sh` generates a config, real sing-box serves it,
+  and every link it prints carries traffic through a companion-built client. The same tunnels must also
+  refuse private destinations, both by address and by name.
 
 ## Limits
 
