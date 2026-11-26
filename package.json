@@ -13,7 +13,9 @@
     "test:e2e": "node --test --test-concurrency=1 --test-reporter=spec \"test/e2e/**/*.test.mjs\"",
     "lint": "eslint .",
     "build": "node scripts/build.mjs",
-    "setup-tools": "node scripts/setup-tools.mjs"
+    "setup-tools": "node scripts/setup-tools.mjs",
+    "test:e2e:matrix": "node scripts/e2e-matrix.mjs",
+    "lint:firefox": "node scripts/build.mjs firefox --no-zip && web-ext lint --source-dir dist/firefox"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

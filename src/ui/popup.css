@@ -179,6 +179,19 @@ footer { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px;
 .banner {
   border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;
   background: var(--warn-bg); color: var(--warn);
+  display: flex; align-items: center; gap: 8px; justify-content: space-between;
+}
+.banner .btn { flex: none; }
+.diagnose-row { margin-top: 8px; align-items: flex-start; }
+.diagnose-row input { margin-top: 2px; }
+
+/* Firefox for Android shows the popup full-screen: use the whole width and
+   give touch targets room. */
+@media (pointer: coarse) {
+  body { width: auto; max-width: 640px; margin: 0 auto; font-size: 15px; }
+  .btn { padding: 9px 14px; }
+  .btn.small { padding: 7px 12px; font-size: 13px; }
+  select, input, textarea { font-size: 15px; }
 }
 .banner.bad { background: var(--bad-bg); color: var(--bad); }
 .banner.good { background: var(--good-bg); color: var(--good); }

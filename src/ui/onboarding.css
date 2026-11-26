@@ -57,3 +57,14 @@ code { background: var(--border); padding: 1px 5px; border-radius: 4px; font-siz
 
 [hidden] { display: none !important; }
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.checklist { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 10px; }
+.checklist li { display: grid; grid-template-columns: 20px 1fr auto; gap: 10px; align-items: start; }
+.checklist .state { font-weight: 700; color: var(--muted); text-align: center; }
+.checklist li.done .state { color: #16a34a; }
+.btn.small { padding: 6px 12px; font-size: 13px; }
+@media (max-width: 520px) {
+  .checklist li { grid-template-columns: 20px 1fr; }
+  .checklist li .btn { grid-column: 2; justify-self: start; }
+  .step { gap: 10px; }
+}

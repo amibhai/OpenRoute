@@ -163,8 +163,13 @@ export function createWebExtMock({ flavor = "chromium", extensionId = "openroute
     badgeColors: [],
     nativeHosts: new Map(),
     nativeConnects: 0,
-    grantedOrigins: new Set(),
+    // Firefox 127+ grants MV3 host_permissions at install; Chromium grants
+    // optional host permissions only on request.
+    grantedOrigins: new Set(isFirefox ? ["<all_urls>"] : []),
     grantedPermissions: new Set(),
+    // Firefox built-in data consent: optional categories start ungranted.
+    dataCollection: new Set(),
+    privateWindowsAllowed: false,
     autoGrantPermissions: true,
     systemDns: new Map(),
     menus: [],
@@ -298,29 +303,38 @@ export function createWebExtMock({ flavor = "chromium", extensionId = "openroute
     },
 
     permissions: {
-      async contains({ origins = [], permissions = [] } = {}) {
+      async contains({ origins = [], permissions = [], data_collection = [] } = {}) {
         await microtask();
         return origins.every((o) => state.grantedOrigins.has(o) || state.grantedOrigins.has("<all_urls>")) &&
-               permissions.every((p) => state.grantedPermissions.has(p));
+               permissions.every((p) => state.grantedPermissions.has(p)) &&
+               data_collection.every((c) => state.dataCollection.has(c));
       },
-      async request({ origins = [], permissions = [] } = {}) {
+      async request({ origins = [], permissions = [], data_collection = [] } = {}) {
         await microtask();
         if (!state.autoGrantPermissions) return false;
         origins.forEach((o) => state.grantedOrigins.add(o));
         permissions.forEach((p) => state.grantedPermissions.add(p));
+        data_collection.forEach((c) => state.dataCollection.add(c));
         return true;
       },
-      async remove({ origins = [], permissions = [] } = {}) {
+      async remove({ origins = [], permissions = [], data_collection = [] } = {}) {
         await microtask();
         origins.forEach((o) => state.grantedOrigins.delete(o));
         permissions.forEach((p) => state.grantedPermissions.delete(p));
+        data_collection.forEach((c) => state.dataCollection.delete(c));
         return true;
       },
       async getAll() {
         await microtask();
-        return { origins: [...state.grantedOrigins], permissions: [...state.grantedPermissions] };
+        const all = { origins: [...state.grantedOrigins], permissions: [...state.grantedPermissions] };
+        if (isFirefox) all.data_collection = [...state.dataCollection];
+        return all;
       },
       onAdded: ev(), onRemoved: ev()
+    },
+
+    extension: {
+      async isAllowedIncognitoAccess() { await microtask(); return state.privateWindowsAllowed; }
     },
 
     i18n: {

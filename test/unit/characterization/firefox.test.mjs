@@ -21,7 +21,9 @@ const ZONE = {
 
 let ext;
 before(async () => {
-  ext = await bootExtension({ flavor: "firefox", zone: ZONE });
+  // Classification tests need the encrypted-DNS check, which on Firefox
+  // requires the user's built-in data consent (granted in onboarding).
+  ext = await bootExtension({ flavor: "firefox", zone: ZONE, setup: (m) => m.state.dataCollection.add("browsingActivity") });
   await ext.send("addTransport", {
     transport: { id: "vps", label: "VPS", scheme: "socks5", host: "127.0.0.1", port: 1081, kind: "user" }
   });

@@ -9,12 +9,41 @@
 <body>
   <main class="wrap">
     <header class="hero">
-      <img src="../../icons/icon128.png" alt="OpenRoute" width="56" height="56" />
+      <img src="../../icons/icon128.png" alt="" width="56" height="56" />
       <div>
         <h1>OpenRoute</h1>
         <p class="sub">Detect what's blocking a site — then route only that site around it, at full speed.</p>
       </div>
     </header>
+
+    <!-- Shown only when something still needs the user's OK (e.g. on Firefox). -->
+    <section id="accessCard" class="card" hidden aria-labelledby="accessTitle">
+      <div class="step">
+        <span class="num" aria-hidden="true">✓</span>
+        <div>
+          <h2 id="accessTitle">A few permissions</h2>
+          <p>Your browser asks you before an extension can do these. OpenRoute never reads page content.</p>
+          <ul class="checklist">
+            <li id="rowHost" hidden>
+              <span class="state" aria-hidden="true"></span>
+              <div><b>Access to all sites</b> — needed to route the blocked ones through a proxy.</div>
+              <button id="grantHost" class="btn small" type="button">Allow</button>
+            </li>
+            <li id="rowConsent" hidden>
+              <span class="state" aria-hidden="true"></span>
+              <div><b>Encrypted-DNS check</b> (optional) — when a site fails, its domain is checked against
+                your DoH provider to tell DNS tampering from other blocks. Routing works without it.</div>
+              <button id="grantConsent" class="btn small" type="button">Allow</button>
+            </li>
+            <li id="rowPrivate" hidden>
+              <span class="state" aria-hidden="true"></span>
+              <div><b>Private windows</b> (optional) — to route there too, open
+                <code>about:addons</code> → OpenRoute → <i>Run in Private Windows</i> → Allow.</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
 
     <section class="card">
       <div class="step">
@@ -22,9 +51,8 @@
         <div>
           <h2>Turn on Secure DNS</h2>
           <p>The #1 cause of blocking is DNS tampering, and this is the zero-latency fix.
-             It takes one toggle in your browser and OpenRoute will confirm it worked.</p>
-          <button id="openDns" class="btn primary">Open Secure DNS settings</button>
-          <p class="hint">Set <b>Use secure DNS</b> → <b>Cloudflare (1.1.1.1)</b> or <b>Google</b>.</p>
+             It takes one toggle in <span id="browserName">your browser</span> and OpenRoute will confirm it worked.</p>
+          <button id="openDns" class="btn primary" type="button">Open Secure DNS settings</button>
           <ol id="dnsSteps" class="hint" hidden></ol>
         </div>
       </div>
@@ -57,7 +85,7 @@
           <p>For sites blocked at the IP level, OpenRoute needs somewhere unblocked to route through.
              Point it at a proxy or Tor you already run, or install the <b>companion</b> for built-in
              Shadowsocks-2022 / VLESS-Reality / Tor and a one-command self-host server.</p>
-          <p class="hint">Popup → <b>Transports</b>. Setup guide: <code>companion/README.md</code> · <code>server/README.md</code>.</p>
+          <p id="companionLine" class="hint">Checking for the companion…</p>
         </div>
       </div>
     </section>
@@ -66,11 +94,11 @@
       <h3>An honest word</h3>
       <p>No tool is truly unblockable — OpenRoute stacks independent fallback layers so that, in
          practice, you almost always get through. It's censorship circumvention, <b>not anonymity</b>:
-         for anonymity use the Tor rung. Know your local laws before circumventing restrictions.</p>
+         for anonymity use Tor Browser. Know your local laws before circumventing restrictions.</p>
     </section>
 
     <footer class="actions">
-      <button id="done" class="btn primary">Start browsing</button>
+      <button id="done" class="btn primary" type="button">Start browsing</button>
       <span class="muted">You can reopen this from the extension's details page.</span>
     </footer>
   </main>

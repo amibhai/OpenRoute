@@ -4,7 +4,7 @@
 // Testing still honor it.)
 
 import { chromium } from "playwright";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,18 +22,40 @@ export function stageExtension() {
   return dir;
 }
 
+// OPENROUTE_E2E_BROWSER picks the Chromium-family browser under test.
+// Branded Chrome 137+ ignores --load-extension; Edge and Brave (and
+// Playwright's Chromium) still honor it. Branded builds run headful but
+// off-screen, since their headless mode may not load extensions.
+const CHROMIUM_FAMILY = {
+  chromium: { channel: "chromium", headless: true },
+  edge: { executablePath: ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "/usr/bin/microsoft-edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"] },
+  brave: { executablePath: ["C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe", "/usr/bin/brave-browser", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"] }
+};
+
+export function browserUnderTest() {
+  const name = process.env.OPENROUTE_E2E_BROWSER || "chromium";
+  const spec = CHROMIUM_FAMILY[name];
+  if (!spec) return { name, launch: { executablePath: name, headless: false } }; // a path
+  if (!spec.executablePath) return { name, launch: spec };
+  const exe = spec.executablePath.find((p) => existsSync(p));
+  return { name, launch: exe ? { executablePath: exe, headless: false } : null };
+}
+
 export async function launchWithExtension({ hostRules = [], extraArgs = [] } = {}) {
   const extDir = stageExtension();
   const profile = tempDir("openroute-profile-");
+  const target = browserUnderTest();
+  if (!target.launch) throw new Error(`browser "${target.name}" is not installed`);
   const args = [
     `--disable-extensions-except=${extDir}`,
     `--load-extension=${extDir}`,
     "--no-first-run",
     "--no-default-browser-check",
+    ...(target.launch.headless === false ? ["--window-position=-2400,-2400"] : []),
     ...(hostRules.length ? [`--host-resolver-rules=${hostRules.join(", ")}`] : []),
     ...extraArgs
   ];
-  const context = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: true, args });
+  const context = await chromium.launchPersistentContext(profile, { ...target.launch, args });
   let worker = context.serviceWorkers().find((w) => w.url().startsWith("chrome-extension://"));
   if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 15000 });
   const extensionId = new URL(worker.url()).host;

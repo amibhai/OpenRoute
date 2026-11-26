@@ -7,7 +7,8 @@
 // createBackground() builds a fresh, self-contained instance (no module-level
 // state), so a worker restart — or a test — always starts clean.
 
-import { detectCapabilities, detectBrowser } from "./platform.js";
+import { detectCapabilities, detectBrowser, accessStatus } from "./platform.js";
+import { isBogon } from "./dns/bogons.js";
 import { createStore, createSessionArea, migrate } from "./store.js";
 import { normalizeError, KIND } from "./errors.js";
 import { classify } from "./diagnosis.js";
@@ -26,7 +27,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   detectionEnabled: true,
   autoRoute: true,
   autoReload: true,
-  dohProvider: "cloudflare"
+  dohProvider: "cloudflare",
+  // Checking a failing site against encrypted DNS sends its domain to the DoH
+  // provider. On Firefox this also requires the built-in data consent.
+  remoteDiagnosis: true
 });
 
 export const MAINTENANCE_ALARM = "openroute-maintenance";
@@ -90,6 +94,40 @@ export function createBackground({ api }) {
     await api.action?.setBadgeText?.({ text: n ? String(n) : "" });
   }
 
+  async function remoteDiagnosisAllowed() {
+    if ((await ctx.settings.get()).remoteDiagnosis === false) return false;
+    if (!caps.dataCollectionConsent) return true;
+    const { dataConsent } = await accessStatus(api, caps);
+    return dataConsent !== false; // null = runtime without the consent system
+  }
+
+  // Firefox only: what the *system* resolver says (TRR bypassed). A bogon
+  // answer here while DoH has a real one is direct evidence of DNS tampering.
+  async function localResolve(host) {
+    if (!caps.dnsApi) return null;
+    try {
+      const r = await api.dns.resolve(host, ["disable_trr", "bypass_cache"]);
+      const addresses = r?.addresses || [];
+      return { addresses, injected: addresses.length > 0 && addresses.every(isBogon), failed: false };
+    } catch {
+      return { addresses: [], injected: false, failed: true };
+    }
+  }
+
+  async function diagnoseHost(host) {
+    if (isIpLiteral(host)) return { ok: true, status: 0, addresses: [host], bogons: [], ipLiteral: true };
+    const [allowed, local] = await Promise.all([remoteDiagnosisAllowed(), localResolve(host)]);
+    const diag = allowed
+      ? { ...(await ctx.diagnose(host)) }
+      : { ok: false, status: null, addresses: [], bogons: [], unreachable: true, skipped: "consent" };
+    if (local) {
+      diag.localAddresses = local.addresses;
+      diag.localInjected = local.injected;
+      diag.localFailed = local.failed;
+    }
+    return diag;
+  }
+
   async function recordSite(host, url, err, diag, type) {
     const t = Date.now();
     await store.tx(["sites"], (d) => {
@@ -100,7 +138,10 @@ export function createBackground({ api }) {
         error: err.raw, errorCode: err.code, errorKind: err.kind,
         resolvedIPs: diag?.addresses || [],
         dohProvider: diag?.resolver || null,
-        dohUnreachable: !!diag?.unreachable,
+        dohUnreachable: !!diag?.unreachable && !diag?.skipped,
+        dohSkipped: diag?.skipped || null,
+        localIPs: diag?.localAddresses || null,
+        localInjected: !!diag?.localInjected,
         hasHTTPS: !!diag?.hasHTTPS, echLikely: !!diag?.echLikely, injected: !!diag?.injected,
         firstSeen: prev?.firstSeen || t, lastSeen: t, count: (prev?.count || 0) + 1
       };
@@ -137,9 +178,7 @@ export function createBackground({ api }) {
     }
     if (err.kind === KIND.PROXY) return; // a proxy we don't manage (system / another extension)
 
-    const diag = isIpLiteral(host)
-      ? { ok: true, status: 0, addresses: [host], bogons: [], ipLiteral: true }
-      : await ctx.diagnose(host);
+    const diag = await diagnoseHost(host);
     const type = classify(err.kind, diag);
     await recordSite(host, details.url, err, diag, type);
     if (err.kind === KIND.POLICY) return;
@@ -181,7 +220,12 @@ export function createBackground({ api }) {
     }
   }
 
-  const handlers = createHandlers(ctx, { updateBadge, getBrowser: () => browser });
+  const handlers = createHandlers(ctx, {
+    updateBadge,
+    getBrowser: () => browser,
+    getAccess: () => accessStatus(api, caps),
+    diagnoseHost
+  });
 
   function isTrustedSender(sender) {
     if (!sender || sender.id !== api.runtime.id) return false;

@@ -26,6 +26,7 @@ export function classify(kind, diag) {
       return TYPES.DNS_UNVERIFIED;
     case KIND.RESET:
     case KIND.TLS:
+      if (d.localInjected && d.ok) return TYPES.DNS_TAMPERING;
       return TYPES.SNI_DPI;
     case KIND.CERT:
       return TYPES.TLS_MITM;
@@ -33,6 +34,10 @@ export function classify(kind, diag) {
     case KIND.REFUSED:
     case KIND.UNREACHABLE:
       if (d.injected) return TYPES.DNS_POISONED;
+      // The local resolver pointed us at a bogus address (e.g. a block-page
+      // server) while encrypted DNS knows the real one: that's DNS tampering
+      // even though the symptom was a dead connection — Secure DNS fixes it.
+      if (d.localInjected && d.ok) return TYPES.DNS_TAMPERING;
       return d.ok ? TYPES.IP_BLOCK : TYPES.UNREACHABLE;
     case KIND.POLICY:
       return TYPES.POLICY;

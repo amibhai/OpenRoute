@@ -9,6 +9,7 @@ const SETTINGS_SCHEMA = {
   detectionEnabled: (v) => typeof v === "boolean",
   autoRoute: (v) => typeof v === "boolean",
   autoReload: (v) => typeof v === "boolean",
+  remoteDiagnosis: (v) => typeof v === "boolean",
   dohProvider: (v) => typeof v === "string" && Object.prototype.hasOwnProperty.call(RESOLVERS, v)
 };
 
@@ -18,8 +19,8 @@ function domainArg(v) {
   return d;
 }
 
-export function createHandlers(ctx, { updateBadge, getBrowser }) {
-  const { api, store, caps, transports, router, ladder, companion, diagnose, settings, log } = ctx;
+export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagnoseHost }) {
+  const { api, store, caps, transports, router, ladder, companion, settings, log } = ctx;
 
   async function upsertCompanionTransport(id, label, port, note) {
     await transports.upsert({ id, label, scheme: "socks5", host: "127.0.0.1", port, kind: "companion", note });
@@ -29,28 +30,33 @@ export function createHandlers(ctx, { updateBadge, getBrowser }) {
 
   return {
     async getState() {
-      const [s, policies, sites, list, activeTransportId, available, eventLog] = await Promise.all([
+      const [s, policies, sites, list, activeTransportId, available, eventLog, access] = await Promise.all([
         settings.get(), store.get("policies", {}), store.get("sites", {}), transports.list(),
-        transports.getActiveId(), companion.isAvailable().catch(() => false), log.list(60)
+        transports.getActiveId(),
+        caps.nativeMessaging ? companion.isAvailable().catch(() => false) : false,
+        log.list(60), getAccess()
       ]);
       const browser = getBrowser();
       return {
         schemaVersion: await store.get("schemaVersion", 0),
         settings: s, policies, sites, transports: list, activeTransportId,
         companion: { available, supported: caps.nativeMessaging },
-        router: router.status(), capabilities: caps, browser,
+        router: router.status(), capabilities: caps, browser, access,
         secureDns: secureDnsGuide(browser), eventLog
       };
     },
 
     async recheck({ host }) {
       const h = domainArg(host);
-      const diag = await diagnose(h, { fresh: true });
+      ctx.diagnose.invalidate?.(h);
+      const diag = await diagnoseHost(h);
       await store.tx(["sites"], (d) => {
         if (!d.sites?.[h]) return;
         d.sites[h] = {
-          ...d.sites[h], resolvedIPs: diag.addresses, dohProvider: diag.resolver, dohUnreachable: !!diag.unreachable,
-          hasHTTPS: diag.hasHTTPS, echLikely: diag.echLikely, injected: diag.injected, lastChecked: Date.now()
+          ...d.sites[h], resolvedIPs: diag.addresses, dohProvider: diag.resolver || null,
+          dohUnreachable: !!diag.unreachable && !diag.skipped, dohSkipped: diag.skipped || null,
+          localIPs: diag.localAddresses || null, localInjected: !!diag.localInjected,
+          hasHTTPS: !!diag.hasHTTPS, echLikely: !!diag.echLikely, injected: !!diag.injected, lastChecked: Date.now()
         };
       });
       return { diag };

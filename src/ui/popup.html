@@ -77,6 +77,14 @@
     <p class="muted">The zero-latency fix for DNS-based blocks. Turn it on once.</p>
     <button id="openDns" class="btn primary" type="button">Open Secure DNS settings</button>
     <ol id="dnsSteps" class="steps small" hidden></ol>
+    <label class="switch small diagnose-row">
+      <input type="checkbox" id="remoteDiagnosis" />
+      <span>Check failing sites with encrypted DNS <span class="muted">(sends only the failing site's domain to your DoH provider)</span></span>
+    </label>
+    <p id="consentNote" class="muted small" hidden>
+      Firefox asks for your consent first.
+      <button id="grantConsent" class="btn tiny" type="button">Allow</button>
+    </p>
   </section>
 
   <!-- Controls -->

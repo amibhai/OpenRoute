@@ -162,12 +162,14 @@ export async function diagnose(hostname, opts = {}) {
 // reuses one lookup instead of starting a storm.
 export function createDiagnoser({ getPreferred, ttlMs = 30_000, fetchImpl } = {}) {
   const cache = new Map();
-  return async function diagnoseCached(host, { fresh = false } = {}) {
+  async function diagnoseCached(host, { fresh = false } = {}) {
     const hit = cache.get(host);
     if (!fresh && hit && Date.now() - hit.at < ttlMs) return hit.diag;
     const diag = await diagnose(host, { preferred: await getPreferred?.(), fetch: fetchImpl });
     cache.set(host, { diag, at: Date.now() });
     if (cache.size > 256) cache.delete(cache.keys().next().value);
     return diag;
-  };
+  }
+  diagnoseCached.invalidate = (host) => cache.delete(host);
+  return diagnoseCached;
 }

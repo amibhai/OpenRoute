@@ -25,8 +25,30 @@ export function detectCapabilities(api) {
     sessionStorage: !!api?.storage?.session,
     privacy: !!api?.privacy?.network?.webRTCIPHandlingPolicy,
     menus: !!(api?.menus ?? api?.contextMenus),
-    permissions: !!api?.permissions
+    permissions: !!api?.permissions,
+    // Firefox routes only requests to hosts it has permission for, and since
+    // 140 has built-in consent for data an extension sends elsewhere.
+    needsHostAccessToRoute: proxyEngine === "firefox",
+    dataCollectionConsent: proxyEngine === "firefox"
   });
+}
+
+// What the user still has to grant for full functionality. Never throws.
+export async function accessStatus(api, caps) {
+  const out = { hostAccess: null, dataConsent: null, privateWindows: null };
+  try {
+    out.hostAccess = await api.permissions.contains({ origins: ["<all_urls>"] });
+  } catch { /* permissions API unavailable */ }
+  if (caps.dataCollectionConsent) {
+    try {
+      const all = await api.permissions.getAll();
+      out.dataConsent = Array.isArray(all?.data_collection) ? all.data_collection.includes("browsingActivity") : null;
+    } catch { /* older Firefox */ }
+  }
+  try {
+    out.privateWindows = await api.extension?.isAllowedIncognitoAccess?.() ?? null;
+  } catch { /* not exposed */ }
+  return out;
 }
 
 // Best-effort browser identity for UI copy and deep links. Never used to
@@ -68,8 +90,11 @@ export function secureDnsGuide(browser) {
         : ["Open about:preferences#privacy in a new tab", "Scroll to DNS over HTTPS", "Choose Increased or Max Protection (provider: Cloudflare or NextDNS)"]
     };
   }
+  // Verified against real Edge 158 / Brave 158 (Edge's chrome://settings/…
+  // aliases land on the Profiles page, so it needs its own URL). Opera and
+  // Vivaldi are best effort; if opening fails the UI shows the steps instead.
   const pages = {
-    Edge: "edge://settings/privacy",
+    Edge: "edge://settings/privacy/security",
     Brave: "brave://settings/security",
     Opera: "opera://settings/security",
     Vivaldi: "chrome://settings/security"

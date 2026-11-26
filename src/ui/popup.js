@@ -8,12 +8,24 @@ import { BADGES, REMEDIATION, STATUS, EXHAUSTED_REASON, RUNG_LABEL, HEALTH_CLS, 
 const api = getApi();
 let STATE = { policies: {}, transports: [], settings: {}, activeTransportId: null, companion: {}, sites: {} };
 
-function banner(text, cls = "warn") {
+function banner(text, cls = "warn", action = null) {
   const b = $("#banner");
   if (!text) { b.hidden = true; return; }
   b.className = `banner ${cls}`;
-  b.textContent = text;
+  setChildren(b, el("span", { text }), action && el("button", {
+    class: "btn tiny", type: "button", text: action.label, onclick: action.onClick
+  }));
   b.hidden = false;
+}
+
+// permissions.request must run inside the click handler (a user gesture).
+async function requestPermissions(perms) {
+  try {
+    await api.permissions.request(perms);
+  } catch (e) {
+    banner(`The browser refused: ${e?.message || e}`, "bad");
+  }
+  refresh();
 }
 
 async function refresh() {
@@ -128,7 +140,9 @@ function renderSites() {
     if (diag.echLikely) bits.push("ECH available");
     else if (diag.hasHTTPS) bits.push("HTTPS record");
     if (diag.injected) bits.push("⚠ injected answer");
+    if (diag.localInjected) bits.push(`⚠ your resolver answered ${(diag.localIPs || []).join(", ")}`);
     if (diag.dohUnreachable) bits.push("encrypted DNS unreachable");
+    if (diag.dohSkipped === "consent") bits.push("encrypted-DNS check off");
     if (diag.dohProvider) bits.push(`via ${RESOLVER_LABELS[diag.dohProvider] || diag.dohProvider}`);
 
     const actions = el("div", { class: "actions" },
@@ -167,9 +181,19 @@ function renderControls() {
   $("#autoReload").checked = s.autoReload !== false;
   $("#detectionToggle").checked = s.detectionEnabled !== false;
   $("#providerSelect").value = s.dohProvider || "cloudflare";
+  $("#remoteDiagnosis").checked = s.remoteDiagnosis !== false;
+
+  const access = STATE.access || {};
+  const caps = STATE.capabilities || {};
+  $("#consentNote").hidden = !(access.dataConsent === false && s.remoteDiagnosis !== false);
 
   const r = STATE.router || {};
-  if (r.level === "controlled_by_other_extensions") {
+  if (caps.needsHostAccessToRoute && access.hostAccess === false) {
+    banner("OpenRoute needs access to all sites to route the blocked ones (it never reads page content).", "bad", {
+      label: "Allow",
+      onClick: () => requestPermissions({ origins: ["<all_urls>"] })
+    });
+  } else if (r.level === "controlled_by_other_extensions") {
     banner("Another extension controls your proxy settings, so OpenRoute can't route sites. Disable the other proxy/VPN extension.", "bad");
   } else if (r.engine === "none") {
     banner("This browser has no proxy API: OpenRoute can diagnose blocks and suggest fixes, but can't route sites.", "warn");
@@ -194,6 +218,8 @@ function initControls() {
   $("#autoReload").addEventListener("change", (e) => save({ autoReload: e.target.checked }));
   $("#detectionToggle").addEventListener("change", (e) => save({ detectionEnabled: e.target.checked }));
   $("#providerSelect").addEventListener("change", (e) => save({ dohProvider: e.target.value }));
+  $("#remoteDiagnosis").addEventListener("change", (e) => save({ remoteDiagnosis: e.target.checked }));
+  $("#grantConsent").addEventListener("click", () => requestPermissions({ data_collection: ["browsingActivity"] }));
   $("#clearAll").addEventListener("click", () => act("clearAll"));
 
   $("#openDns").addEventListener("click", async () => {
