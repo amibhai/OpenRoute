@@ -10,8 +10,25 @@ const SETTINGS_SCHEMA = {
   autoRoute: (v) => typeof v === "boolean",
   autoReload: (v) => typeof v === "boolean",
   remoteDiagnosis: (v) => typeof v === "boolean",
-  dohProvider: (v) => typeof v === "string" && Object.prototype.hasOwnProperty.call(RESOLVERS, v)
+  dohProvider: (v) => typeof v === "string" && Object.prototype.hasOwnProperty.call(RESOLVERS, v),
+  customDoH: (v) => v === null || isHttpsUrl(v),
+  mode: (v) => ["smart", "full", "off"].includes(v),
+  routeScope: (v) => v === "registrable" || v === "host",
+  bundles: (v) => typeof v === "boolean",
+  deepDetection: (v) => typeof v === "boolean",
+  webrtcProtection: (v) => typeof v === "boolean"
 };
+
+const MAX_RULES = 1000;
+
+function isHttpsUrl(v) {
+  try {
+    const u = new URL(v);
+    return u.protocol === "https:" && !u.username && !u.password && v.length <= 300;
+  } catch {
+    return false;
+  }
+}
 
 function domainArg(v) {
   const d = normalizeHost(v);
@@ -30,16 +47,16 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
 
   return {
     async getState() {
-      const [s, policies, sites, list, activeTransportId, available, eventLog, access] = await Promise.all([
+      const [s, policies, sites, list, activeTransportId, available, eventLog, access, rules] = await Promise.all([
         settings.get(), store.get("policies", {}), store.get("sites", {}), transports.list(),
         transports.getActiveId(),
         caps.nativeMessaging ? companion.isAvailable().catch(() => false) : false,
-        log.list(60), getAccess()
+        log.list(60), getAccess(), store.get("rules", {})
       ]);
       const browser = getBrowser();
       return {
         schemaVersion: await store.get("schemaVersion", 0),
-        settings: s, policies, sites, transports: list, activeTransportId,
+        settings: s, policies, sites, transports: list, activeTransportId, rules,
         companion: { available, supported: caps.nativeMessaging },
         router: router.status(), capabilities: caps, browser, access,
         secureDns: secureDnsGuide(browser), eventLog
@@ -89,15 +106,51 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
         clean[k] = v;
       }
       const next = await settings.patch(clean);
+      if ("mode" in clean) await router.apply();
+      const webrtc = "webrtcProtection" in clean ? await ctx.applyWebRtc() : undefined;
       if (clean.autoRoute === true) await ladder.retryDue({ force: true });
-      return { settings: next };
+      return { settings: next, webrtc };
     },
 
     async addTransport({ transport }) {
       const t = await transports.upsert(transport);
       await router.apply();
+      // Measure it right away so it never carries a site while dead.
+      const probe = ctx.verifyTransport ? await ctx.verifyTransport(t.id, { timeout: 5000 }) : null;
       await ladder.retryDue({ force: true }); // a new transport is a new chance for exhausted domains
-      return { transport: t, transports: await transports.list() };
+      return { transport: t, probe, transports: await transports.list() };
+    },
+
+    async probeTransport({ id }) {
+      if (!(await transports.get(String(id)))) throw new Error("no such transport");
+      return { result: await ctx.verifyTransport(String(id)), transports: await transports.list() };
+    },
+
+    async discoverLocalProxies() {
+      const result = await ctx.discover();
+      if (result.found?.length) {
+        await router.apply();
+        await ladder.retryDue({ force: true });
+      }
+      return { ...result, transports: await transports.list() };
+    },
+
+    // list: "always" | "never" | null (remove the rule)
+    async setRule({ domain, list }) {
+      const d = domainArg(domain);
+      if (list !== null && list !== "always" && list !== "never") throw new Error('list must be "always", "never" or null');
+      await store.tx(["rules"], (draft) => {
+        const rules = draft.rules || {};
+        rules.always = (rules.always || []).filter((x) => x !== d);
+        rules.never = (rules.never || []).filter((x) => x !== d);
+        if (list) {
+          if (rules[list].length >= MAX_RULES) throw new Error("too many rules");
+          rules[list].push(d);
+        }
+        draft.rules = rules;
+      });
+      await router.apply();
+      return { rules: await store.get("rules", {}) };
     },
 
     async removeTransport({ id }) {

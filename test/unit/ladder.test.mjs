@@ -16,24 +16,47 @@ async function withTransports(ext, ports) {
   }
 }
 
-test("escalates through every transport, then backs off — each step bounded", async () => {
+test("a routed domain gets a failover chain (primary + 2), never ending in DIRECT", async () => {
+  const ext = await bootExtension({ zone: zone("chain.example") });
+  await withTransports(ext, [3001, 3002, 3003]);
+  await ext.fail("https://chain.example/", "net::ERR_CONNECTION_TIMED_OUT");
+  const route = await ext.route("https://chain.example/");
+  const hops = route.split(";").map((s) => s.trim());
+  assert.equal(hops.length, 3, route);
+  assert.equal(new Set(hops).size, 3);
+  assert.ok(!hops.includes("DIRECT"));
+  assert.equal(hops[0], `SOCKS5 127.0.0.1:${(await ext.policy("chain.example")).proxyId.slice(1)}`, "primary first");
+});
+
+test("proxy-connection failure = Chromium already walked the whole chain → back off", async () => {
   const ext = await bootExtension({ zone: zone("esc.example") });
   await withTransports(ext, [3001, 3002, 3003]);
   await ext.fail("https://esc.example/", "net::ERR_CONNECTION_TIMED_OUT", { tabId: 4 });
-  const used = [(await ext.policy("esc.example")).proxyId];
-  for (let i = 0; i < 2; i++) {
-    await ext.fail("https://esc.example/", "net::ERR_PROXY_CONNECTION_FAILED", { tabId: 4 });
-    used.push((await ext.policy("esc.example")).proxyId);
-  }
-  assert.deepEqual(new Set(used), new Set(["p3001", "p3002", "p3003"]), "tried every transport once");
   await ext.fail("https://esc.example/", "net::ERR_PROXY_CONNECTION_FAILED", { tabId: 4 });
   const pol = await ext.policy("esc.example");
-  assert.equal(pol.status, "exhausted");
+  assert.equal(pol.status, "exhausted", "every transport in the chain was tried by the browser");
   assert.equal(pol.exhaustedReason, "all-transports-failed");
   assert.ok(pol.retryAt > Date.now(), "a retry is scheduled");
   assert.equal(await ext.route("https://esc.example/"), "DIRECT", "an exhausted domain isn't routed into a dead end");
   await sleep(450);
   assert.ok(ext.reloadsFor(4) <= 3, `reloads ${ext.reloadsFor(4)} within budget`);
+});
+
+test("a site failing through a working proxy escalates to the next transport, one at a time", async () => {
+  const ext = await bootExtension({ zone: zone("exit.example") });
+  await withTransports(ext, [3011, 3012, 3013]);
+  await ext.fail("https://exit.example/", "net::ERR_CONNECTION_TIMED_OUT", { tabId: 5 });
+  const used = [(await ext.policy("exit.example")).proxyId];
+  for (let i = 0; i < 2; i++) {
+    // The proxy connected fine; the site itself didn't answer at that exit.
+    await ext.fail("https://exit.example/", "net::ERR_CONNECTION_RESET", { tabId: 5 });
+    used.push((await ext.policy("exit.example")).proxyId);
+  }
+  assert.deepEqual(new Set(used), new Set(["p3011", "p3012", "p3013"]), `tried each exit: ${used}`);
+  await ext.fail("https://exit.example/", "net::ERR_CONNECTION_RESET", { tabId: 5 });
+  assert.equal((await ext.policy("exit.example")).status, "exhausted");
+  const health = (await ext.view()).transports.map((t) => t.health);
+  assert.ok(health.every((h) => h === "up"), `site failures didn't poison transport health: ${health}`);
 });
 
 test("a successful load verifies the route and credits the transport", async () => {

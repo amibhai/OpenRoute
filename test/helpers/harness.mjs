@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createWebExtMock } from "./webext-mock.mjs";
 import { installFakeDoH } from "./fake-doh.mjs";
+import { installNetSim } from "./net-sim.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CANDIDATE_ENTRIES = [join(ROOT, "src", "background", "index.js"), join(ROOT, "background.js")];
@@ -22,11 +23,12 @@ let bootCount = 0;
 
 export async function bootExtension({ flavor = "chromium", zone = {}, dohDown = false, setup } = {}) {
   const mock = createWebExtMock({ flavor }).install();
+  const net = installNetSim(mock);
   const doh = installFakeDoH(mock, zone, { down: dohDown });
-  if (setup) await setup(mock);
+  if (setup) await setup(mock, net);
   await importEntry();
   await mock.settle();
-  return wrap(mock, doh);
+  return wrap(mock, doh, net);
 }
 
 async function importEntry() {
@@ -35,10 +37,11 @@ async function importEntry() {
   await import(`${pathToFileURL(ENTRY).href}?boot=${++bootCount}`);
 }
 
-function wrap(mock, doh) {
+function wrap(mock, doh, net) {
   const ext = {
     mock,
     doh,
+    net,
     api: mock.api,
     state: mock.state,
 

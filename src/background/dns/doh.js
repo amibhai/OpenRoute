@@ -1,175 +1,255 @@
-// DNS-over-HTTPS engine.
+// DNS-over-HTTPS engine (RFC 8484 wire format).
 //
-//   * Resilient  — several independent resolvers, each reachable by hostname
-//                  *and* by IP literal, so one blocked or poisoned resolver
-//                  never stalls a diagnosis.
-//   * Bounded    — every request has an AbortController timeout; a hung fetch
-//                  can't wedge the worker.
-//   * Honest     — answers are validated against bogon ranges, so "the ISP is
-//                  faking DNS" is told apart from "even DoH is being tampered
-//                  with", and "no resolver reachable" is never mistaken for
-//                  NXDOMAIN.
-//
-// Speaks the JSON DoH API (?name=&type=) with numeric RR types. The IP-literal
-// endpoints matter: when a censor poisons a resolver's *hostname*, it's still
-// reachable by IP because those certificates carry IP SANs.
+//   * Fast       — endpoints are raced happy-eyeballs style: a new attempt
+//                  starts every STAGGER_MS until one answers, failures fall
+//                  through immediately, and a hard deadline caps the lookup.
+//   * Resilient  — several independent, NON-filtering resolvers, each by
+//                  hostname and by IP literal (certs carry IP SANs), so a
+//                  poisoned resolver hostname doesn't matter. Endpoints that
+//                  failed recently are tried last.
+//   * Honest     — answers are validated (bogons ⇒ "injected"), suspicious
+//                  answers (NXDOMAIN / bogons) get a second opinion from a
+//                  different resolver, and "nobody answered" is reported as
+//                  unreachable — never as NXDOMAIN.
 
+import { encodeQuery, decodeMessage, toBase64Url, TYPE, RCODE } from "./wire.js";
 import { isBogon } from "./bogons.js";
 
-const DEFAULT_TIMEOUT_MS = 3500;
-const DEFAULT_RETRIES = 1;
+// Filtering resolvers (ad/malware blocking) are deliberately excluded: their
+// "blocked" answers would look exactly like censorship to the classifier.
+export const RESOLVERS = Object.freeze({
+  cloudflare: { label: "Cloudflare", endpoints: ["https://cloudflare-dns.com/dns-query", "https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"] },
+  google: { label: "Google", endpoints: ["https://dns.google/dns-query", "https://8.8.8.8/dns-query", "https://8.8.4.4/dns-query"] },
+  quad9: { label: "Quad9", endpoints: ["https://dns.quad9.net/dns-query", "https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"] },
+  adguard: { label: "AdGuard (unfiltered)", endpoints: ["https://unfiltered.adguard-dns.com/dns-query"] },
+  mullvad: { label: "Mullvad", endpoints: ["https://dns.mullvad.net/dns-query"] },
+  nextdns: { label: "NextDNS", endpoints: ["https://dns.nextdns.io/dns-query"] },
+  dnssb: { label: "DNS.SB", endpoints: ["https://doh.dns.sb/dns-query", "https://185.222.222.222/dns-query"] }
+});
 
-export const RESOLVERS = {
-  cloudflare: {
-    label: "Cloudflare",
-    endpoints: ["https://cloudflare-dns.com/dns-query", "https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"],
-    headers: { accept: "application/dns-json" }
-  },
-  google: {
-    label: "Google",
-    endpoints: ["https://dns.google/resolve", "https://8.8.8.8/resolve", "https://8.8.4.4/resolve"],
-    headers: { accept: "application/dns-json" }
-  },
-  quad9: {
-    label: "Quad9",
-    endpoints: ["https://dns.quad9.net/dns-query", "https://9.9.9.9/dns-query"],
-    headers: { accept: "application/dns-json" }
-  }
-};
+export const RACE_ORDER = ["cloudflare", "google", "quad9", "dnssb", "mullvad", "nextdns", "adguard"];
+export const RESOLVER_HOSTS = [...new Set(Object.values(RESOLVERS).flatMap((r) => r.endpoints.map((u) => new URL(u).hostname)))];
 
-export const RR = { A: 1, CNAME: 5, AAAA: 28, HTTPS: 65 };
+export const TIMING = Object.freeze({
+  staggerMs: 250,          // start the next endpoint if nothing answered yet
+  attemptTimeoutMs: 3000,  // one endpoint
+  deadlineMs: 5000,        // the whole lookup
+  confirmMs: 600,          // wait this long for a second opinion on a suspicious answer
+  maxEndpoints: 6          // per lookup
+});
+const FAIL_COOLDOWN_MS = 5 * 60 * 1000;
 
-// Best-effort ECH hint from an HTTPS/SVCB answer's presentation form
-// ("ech=") or unknown-RDATA hex (SvcParamKey 5 = "0005"). Advisory only.
-function looksLikeECH(rr) {
-  const d = String(rr.data || "").toLowerCase();
-  return d.includes("ech=") || /(?:^|[^0-9a-f])0005[0-9a-f]{2,}/.test(d.replace(/\s+/g, ""));
+export function createEndpointHealth(now = () => Date.now()) {
+  const m = new Map();
+  return {
+    ok(url, ms) {
+      const h = m.get(url) || { fails: 0 };
+      h.lastOk = now();
+      h.fails = 0;
+      h.ewmaMs = h.ewmaMs == null ? ms : Math.round(h.ewmaMs * 0.7 + ms * 0.3);
+      m.set(url, h);
+    },
+    fail(url) {
+      const h = m.get(url) || { fails: 0 };
+      h.lastFail = now();
+      h.fails += 1;
+      m.set(url, h);
+    },
+    coolingDown(url) {
+      const h = m.get(url);
+      return !!h && h.fails > 0 && now() - h.lastFail < FAIL_COOLDOWN_MS;
+    },
+    snapshot() { return Object.fromEntries(m); }
+  };
 }
 
-async function timedFetchJSON(fetchImpl, url, headers, timeoutMs) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const resp = await fetchImpl(url, { headers, cache: "no-store", credentials: "omit", signal: ctrl.signal });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    return await resp.json();
-  } finally {
-    clearTimeout(timer);
-  }
+// Interleave resolvers (preferred first) so one resolver's slow endpoints
+// never starve the others. A recently-failed endpoint is demoted *within its
+// resolver*: when "cloudflare-dns.com" is blocked by DNS/SNI, its IP-literal
+// sibling 1.1.1.1 is exactly what tends to get through, so it moves up.
+export function planEndpoints(resolverKeys, health, customUrl) {
+  const lists = resolverKeys.filter((k) => RESOLVERS[k]).map((k) => {
+    const eps = RESOLVERS[k].endpoints.map((url) => ({ url, resolver: k }));
+    return [...eps.filter((e) => !health.coolingDown(e.url)), ...eps.filter((e) => health.coolingDown(e.url))];
+  });
+  if (customUrl) lists.unshift([{ url: customUrl, resolver: "custom" }]);
+  const flat = [];
+  for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) flat.push(l[i]);
+  return flat;
 }
 
-function parseAnswer(hostname, type, resolverKey, data) {
-  const status = typeof data?.Status === "number" ? data.Status : null;
-  const answers = Array.isArray(data?.Answer) ? data.Answer : [];
-  const addresses = answers
-    .filter((a) => a.type === RR.A || a.type === RR.AAAA)
-    .map((a) => String(a.data).trim())
-    .filter(Boolean);
-  const httpsRecords = answers.filter((a) => a.type === RR.HTTPS);
+async function queryEndpoint(fetchImpl, url, name, type, signal) {
+  const q = encodeQuery(name, type);
+  const res = await fetchImpl(`${url}${url.includes("?") ? "&" : "?"}dns=${toBase64Url(q)}`, {
+    headers: { accept: "application/dns-message" },
+    cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", signal
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/dns-message")) throw new Error(`unexpected content-type "${ct}"`);
+  const msg = decodeMessage(new Uint8Array(await res.arrayBuffer()));
+  if (!msg.qr) throw new Error("not a DNS response");
+  return msg;
+}
+
+function summarize(msg) {
+  const addresses = msg.answers.filter((a) => (a.type === TYPE.A || a.type === TYPE.AAAA) && a.data).map((a) => a.data);
+  const svcb = msg.answers.filter((a) => (a.type === TYPE.HTTPS || a.type === TYPE.SVCB) && a.data);
   const bogons = addresses.filter(isBogon);
   return {
-    hostname, type, resolver: resolverKey, status, addresses,
-    hasHTTPS: httpsRecords.length > 0,
-    echLikely: httpsRecords.some(looksLikeECH),
-    injected: addresses.length > 0 && bogons.length === addresses.length,
+    status: msg.rcode,
+    addresses,
     bogons,
-    ok: status === 0 && addresses.length > 0 && bogons.length < addresses.length
+    injected: addresses.length > 0 && bogons.length === addresses.length,
+    ok: msg.rcode === RCODE.NOERROR && addresses.length > bogons.length,
+    hasHTTPS: svcb.length > 0,
+    echLikely: svcb.some((r) => r.data.params?.ech > 0),
+    alpn: [...new Set(svcb.flatMap((r) => r.data.params?.alpn || []))],
+    cnames: msg.answers.filter((a) => a.type === TYPE.CNAME).map((a) => a.data)
   };
 }
 
-async function queryResolver(fetchImpl, resolverKey, hostname, type, opts) {
-  const cfg = RESOLVERS[resolverKey];
-  if (!cfg) throw new Error("unknown resolver " + resolverKey);
-  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const retries = opts.retries ?? DEFAULT_RETRIES;
-  let lastErr;
-  for (const base of cfg.endpoints) {
-    const url = `${base}?name=${encodeURIComponent(hostname)}&type=${RR[type] ?? type}`;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        return parseAnswer(hostname, type, resolverKey, await timedFetchJSON(fetchImpl, url, cfg.headers, timeout));
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-  }
-  throw lastErr || new Error("all endpoints failed for " + resolverKey);
-}
+const authoritative = (s) => s.status === RCODE.NOERROR || s.status === RCODE.NXDOMAIN;
+const suspicious = (s) => s.status === RCODE.NXDOMAIN || s.injected;
 
-// A NOERROR or NXDOMAIN answer is one we can act on.
-const authoritative = (r) => r && (r.status === 0 || r.status === 3);
+/** Race endpoints for one (name, type). Resolves to a summary or null; never rejects. */
+export function raceLookup(name, type, { endpoints, fetchImpl, health, timing = TIMING }) {
+  const t = { ...TIMING, ...timing };
+  const list = endpoints.slice(0, t.maxEndpoints);
+  return new Promise((resolve) => {
+    const answers = [];
+    const controllers = [];
+    let next = 0;
+    let inFlight = 0;
+    let done = false;
+    let staggerTimer = null;
+    let confirmTimer = null;
+
+    const choose = () => {
+      if (!answers.length) return null;
+      const good = answers.find((a) => a.ok); // a real answer outweighs NXDOMAIN/bogons from another resolver
+      return {
+        ...(good || answers[0]),
+        consensus: {
+          answers: answers.length,
+          resolvers: new Set(answers.map((a) => a.resolver)).size,
+          disagreement: answers.some((a) => a.ok) && answers.some((a) => !a.ok)
+        }
+      };
+    };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(staggerTimer);
+      clearTimeout(confirmTimer);
+      clearTimeout(deadline);
+      for (const c of controllers) c.abort();
+      resolve(choose());
+    };
+    const onAnswer = (a) => {
+      answers.push(a);
+      if (!suspicious(a) || answers.some((x) => x.resolver !== a.resolver)) return finish();
+      // Suspicious and unconfirmed: hurry a second opinion, but don't wait long.
+      if (!confirmTimer) confirmTimer = setTimeout(finish, t.confirmMs);
+      launch();
+    };
+    const launch = () => {
+      clearTimeout(staggerTimer);
+      if (done) return;
+      if (next >= list.length) {
+        if (inFlight === 0) finish();
+        return;
+      }
+      const ep = list[next++];
+      // Second opinions must come from a different resolver.
+      if (answers.length && answers.every((a) => a.resolver === ep.resolver) && next < list.length) {
+        launch();
+        return;
+      }
+      const ctrl = new AbortController();
+      controllers.push(ctrl);
+      const attemptTimer = setTimeout(() => ctrl.abort(), t.attemptTimeoutMs);
+      const started = Date.now();
+      inFlight++;
+      queryEndpoint(fetchImpl, ep.url, name, type, ctrl.signal)
+        .then((msg) => {
+          health.ok(ep.url, Date.now() - started);
+          if (done) return;
+          const s = summarize(msg);
+          if (authoritative(s)) onAnswer({ ...s, resolver: ep.resolver, endpoint: ep.url });
+        })
+        .catch(() => { if (!done) health.fail(ep.url); })
+        .finally(() => {
+          clearTimeout(attemptTimer);
+          inFlight--;
+          if (done) return;
+          if (inFlight === 0) launch(); // an attempt failed/answered unusably: move on now
+        });
+      staggerTimer = setTimeout(launch, t.staggerMs);
+    };
+    const deadline = setTimeout(finish, t.deadlineMs);
+    launch();
+  });
+}
 
 /**
- * Resolve resiliently: the preferred resolver first, then race the rest and
- * take the first authoritative answer. Never rejects.
+ * The DoH client. getConfig() → { preferred, customUrl } (read per lookup so
+ * settings changes apply immediately).
  */
-export async function resolveResilient(hostname, opts = {}) {
-  const fetchImpl = opts.fetch || globalThis.fetch;
-  const type = opts.type || "A";
-  const preferred = RESOLVERS[opts.preferred] ? opts.preferred : "cloudflare";
-  const order = [preferred, ...Object.keys(RESOLVERS).filter((k) => k !== preferred)];
+export function createDoH({ fetchImpl, getConfig = async () => ({}), timing, health = createEndpointHealth() } = {}) {
+  const doFetch = (...a) => (fetchImpl || globalThis.fetch)(...a);
 
-  try {
-    const r = await queryResolver(fetchImpl, preferred, hostname, type, opts);
-    if (authoritative(r)) return { ...r, triedResolvers: [preferred] };
-  } catch { /* fall through to the race */ }
+  async function lookup(name, type) {
+    const cfg = await getConfig();
+    const preferred = RESOLVERS[cfg.preferred] ? cfg.preferred : "cloudflare";
+    const keys = [preferred, ...RACE_ORDER.filter((k) => k !== preferred)];
+    const endpoints = planEndpoints(keys, health, cfg.customUrl);
+    return raceLookup(name, type, { endpoints, fetchImpl: doFetch, health, timing });
+  }
 
-  const attempts = order.slice(1).map((k) => queryResolver(fetchImpl, k, hostname, type, opts));
-  try {
-    const r = await Promise.any(attempts.map(async (p) => {
-      const v = await p;
-      if (authoritative(v)) return v;
-      throw new Error("non-authoritative");
-    }));
-    return { ...r, triedResolvers: order };
-  } catch { /* nobody was authoritative */ }
+  /** A + AAAA reachability and an HTTPS/SVCB lookup (ECH). Never rejects. */
+  async function diagnose(hostname) {
+    const [a, aaaa, https] = await Promise.all([
+      lookup(hostname, TYPE.A), lookup(hostname, TYPE.AAAA), lookup(hostname, TYPE.HTTPS)
+    ]);
+    const answered = [a, aaaa].filter(Boolean);
+    const addresses = [...new Set(answered.flatMap((r) => r.addresses))];
+    const bogons = addresses.filter(isBogon);
+    const status = answered.some((r) => r.status === RCODE.NOERROR) ? RCODE.NOERROR : (answered[0]?.status ?? null);
+    return {
+      hostname,
+      ok: status === RCODE.NOERROR && addresses.length > bogons.length,
+      status,
+      addresses,
+      bogons,
+      injected: addresses.length > 0 && bogons.length === addresses.length,
+      unreachable: answered.length === 0,
+      resolver: (a || aaaa)?.resolver ?? null,
+      endpoint: (a || aaaa)?.endpoint ?? null,
+      consensus: (a || aaaa)?.consensus ?? null,
+      hasHTTPS: !!https?.hasHTTPS,
+      echLikely: !!https?.echLikely,
+      alpn: https?.alpn || [],
+      error: answered.length ? undefined : "no resolver answered",
+      at: Date.now()
+    };
+  }
 
-  const settled = await Promise.allSettled(attempts);
-  const any = settled.find((s) => s.status === "fulfilled");
-  if (any) return { ...any.value, triedResolvers: order };
-
-  return {
-    hostname, type, ok: false, status: null, addresses: [], bogons: [],
-    hasHTTPS: false, echLikely: false, injected: false,
-    resolver: null, triedResolvers: order, unreachable: true, error: "all resolvers failed"
-  };
+  return { lookup, diagnose, health };
 }
 
-/** A/AAAA reachability plus an HTTPS/SVCB lookup for ECH awareness. Never rejects. */
-export async function diagnose(hostname, opts = {}) {
-  const [a, https] = await Promise.all([
-    resolveResilient(hostname, { ...opts, type: "A" }),
-    resolveResilient(hostname, { ...opts, type: "HTTPS" }).catch(() => null)
-  ]);
-  return {
-    hostname,
-    ok: a.ok,
-    status: a.status,
-    addresses: a.addresses,
-    bogons: a.bogons || [],
-    injected: !!a.injected,
-    unreachable: !!a.unreachable,
-    resolver: a.resolver,
-    triedResolvers: a.triedResolvers || [],
-    hasHTTPS: !!https?.hasHTTPS,
-    echLikely: !!https?.echLikely,
-    error: a.error,
-    at: Date.now()
-  };
-}
-
-// Diagnoses for a host are cached briefly so a page that retries in a burst
-// reuses one lookup instead of starting a storm.
-export function createDiagnoser({ getPreferred, ttlMs = 30_000, fetchImpl } = {}) {
+// Short-lived cache in front of diagnose(), so a page retrying in a burst
+// reuses one diagnosis instead of starting a lookup storm.
+export function createDiagnoser({ doh, ttlMs = 30_000 }) {
   const cache = new Map();
   async function diagnoseCached(host, { fresh = false } = {}) {
     const hit = cache.get(host);
     if (!fresh && hit && Date.now() - hit.at < ttlMs) return hit.diag;
-    const diag = await diagnose(host, { preferred: await getPreferred?.(), fetch: fetchImpl });
+    const diag = await doh.diagnose(host);
     cache.set(host, { diag, at: Date.now() });
     if (cache.size > 256) cache.delete(cache.keys().next().value);
     return diag;
   }
-  diagnoseCached.invalidate = (host) => cache.delete(host);
+  diagnoseCached.invalidate = (host) => (host ? cache.delete(host) : cache.clear());
   return diagnoseCached;
 }

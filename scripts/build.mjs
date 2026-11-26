@@ -50,7 +50,8 @@ export const TARGETS = {
       m.background = { scripts: [m.background.service_worker], type: "module" };
       // proxy.onRequest only sees requests to hosts we have permission for.
       m.host_permissions = ["<all_urls>"];
-      m.permissions = [...new Set([...m.permissions, "dns"])];
+      // Firefox authenticates proxies through onRequest descriptors instead.
+      m.permissions = [...new Set([...m.permissions.filter((p) => p !== "webRequestAuthProvider"), "dns"])];
       if (m.optional_host_permissions) delete m.optional_host_permissions;
       m.browser_specific_settings = {
         gecko: {

@@ -49,11 +49,18 @@ export async function launchFirefox({ localDomains = [], idleTimeoutMs = 3000, p
   await openControl();
 
   // runtime.sendMessage from the extension's own page (a trusted sender).
+  // Retries like the real UI does: a suspended event page can briefly report
+  // "Receiving end does not exist" while Firefox wakes it.
   async function send(type, extra = {}) {
-    const res = await driver.executeAsyncScript(
-      "const [msg, done] = [arguments[0], arguments[arguments.length - 1]];" +
-      "browser.runtime.sendMessage(msg).then(done, (e) => done({ ok: false, error: String(e) }));",
-      { type, ...extra });
+    let res;
+    for (let i = 0; i < 5; i++) {
+      res = await driver.executeAsyncScript(
+        "const [msg, done] = [arguments[0], arguments[arguments.length - 1]];" +
+        "browser.runtime.sendMessage(msg).then(done, (e) => done({ ok: false, error: String(e), transient: /Receiving end/.test(String(e)) }));",
+        { type, ...extra });
+      if (!res?.transient) return res;
+      await new Promise((r) => setTimeout(r, 200 * (i + 1)));
+    }
     return res;
   }
 

@@ -13,6 +13,8 @@ export const TYPES = Object.freeze({
   IP_BLOCK: "ip-block",             // DNS fine, packets to the server are dropped/refused
   UNREACHABLE: "unreachable",       // server unreachable and DNS couldn't be checked
   POLICY: "policy-block",           // a local policy/firewall, not the ISP
+  DNS_BLOCKPAGE: "dns-blockpage",   // page "loaded", but from an injected private address
+  LEGAL_451: "http-451",            // HTTP 451 Unavailable For Legal Reasons
   UNKNOWN: "unknown"
 });
 

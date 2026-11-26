@@ -11,7 +11,15 @@
 
 import { RUNGS, STATUS, MAX_ATTEMPTS, blankPolicy, isRouted, backoffFor, prunePolicies } from "./policy.js";
 import { startRung } from "./diagnosis.js";
+import { KIND } from "./errors.js";
+import { HEALTH } from "./transports/health.js";
+import { bundleFor } from "./domains/bundles.js";
 import { lookupDomain, hostFromUrl } from "../shared/hosts.js";
+
+const PROBE_FRESH_MS = 2 * 60 * 1000;   // a probe this recent is trusted without re-probing
+const MAX_PREROUTE_PROBES = 3;
+// Direct re-checks of routed sites: a day, three days, then weekly.
+export const RECHECK_MS = Object.freeze([24 * 3600e3, 3 * 24 * 3600e3, 7 * 24 * 3600e3]);
 
 const RELOAD_SETTLE_MS = 350;          // give the browser a beat to install the new route
 const RELOAD_WINDOW_MS = 2 * 60 * 1000;
@@ -103,6 +111,26 @@ export function createLadder(ctx) {
     return next;
   }
 
+  // The best transport that is known to work: unmeasured / degraded ones get a
+  // quick probe first, so a domain is never sent down a dead path (e.g. the
+  // Tor Browser preset when Tor Browser isn't running).
+  async function pickVerified(exclude) {
+    const skip = [...exclude];
+    for (let i = 0; i <= MAX_PREROUTE_PROBES; i++) {
+      const t = await transports.pickBest(skip);
+      if (!t) return null;
+      const h = (await health.getAll())[t.id];
+      if (h?.state === HEALTH.UP || !ctx.verifyTransport) return t;      // last outcome was good
+      const justFailed = h?.lastProbe && now() - h.lastProbe < PROBE_FRESH_MS;
+      if (justFailed) { skip.push(t.id); continue; }                     // known bad right now
+      if (i === MAX_PREROUTE_PROBES) return t;
+      const r = await ctx.verifyTransport(t.id, { timeout: 4000 });
+      if (r.ok || r.error === "no-control") return t; // can't probe → don't punish, just use it
+      skip.push(t.id);
+    }
+    return null;
+  }
+
   async function routeVia(domain, info, exclude = []) {
     const lastError = info.err?.raw ?? null;
     if (!caps.canRoute) {
@@ -112,7 +140,7 @@ export function createLadder(ctx) {
       return update(domain, () => ({ rung: "proxy", proxyId: null, status: STATUS.NEEDS_USER, exhaustedReason: "auto-route-off", lastError }));
     }
     const before = (await allPolicies())[domain] || null;
-    const t = await transports.pickBest(exclude);
+    const t = await pickVerified(exclude);
     if (!t) return exhaust(domain, exclude.length ? "all-transports-failed" : "no-transport", lastError);
 
     const next = await update(domain, (p) => ({
@@ -126,10 +154,57 @@ export function createLadder(ctx) {
       retryAt: null,
       exhaustedReason: null
     }));
+    if (next.via !== "bundle") await routeBundle(domain, t.id);
     await router.apply();
     log.add("routed", { domain, via: t.id, attempt: next.attempts });
     const changed = !isRouted(before) || before.proxyId !== t.id;
     if (changed) await maybeReload(info.tabId, domain);
+    return next;
+  }
+
+  // Route the rest of a site's bundle (its CDNs/API hosts) along with it, and
+  // keep bundle members on the same transport as their parent.
+  async function routeBundle(domain, transportId) {
+    if ((await settings.get()).bundles === false) return [];
+    const bundle = bundleFor(domain);
+    if (!bundle) return [];
+    return store.tx(["policies"], (d) => {
+      const all = d.policies || {};
+      const added = [];
+      for (const m of bundle.members) {
+        if (m === domain) continue;
+        const cur = all[m];
+        if (!cur) {
+          all[m] = {
+            ...blankPolicy(m, now()), rung: "proxy", proxyId: transportId, status: STATUS.ROUTING,
+            via: "bundle", bundle: bundle.name, parent: domain, attempts: 1, triedProxies: [transportId]
+          };
+          added.push(m);
+        } else if (cur.via === "bundle" && cur.parent === domain && !cur.pinned && cur.status !== STATUS.EXHAUSTED) {
+          all[m] = { ...cur, proxyId: transportId, updatedAt: now() };
+        }
+      }
+      d.policies = prunePolicies(all);
+      if (added.length) log.add("bundle", { domain, bundle: bundle.name, added });
+      return added;
+    });
+  }
+
+  // One of a routed site's own hosts (CDN, API) is blocked too: route it via
+  // the parent's transport, so the whole page leaves through one exit.
+  async function routeSubresource(domain, parent, info) {
+    const cur = (await allPolicies())[domain] || null;
+    if (cur && (isRouted(cur) || cur.pinned)) return cur;
+    const parentTransport = parent.proxyId ? await transports.get(parent.proxyId) : null;
+    const t = parentTransport || await pickVerified([]);
+    if (!t) return null;
+    const next = await update(domain, () => ({
+      rung: "proxy", proxyId: t.id, status: STATUS.ROUTING, via: "subresource", parent: parent.domain,
+      lastError: info.err?.raw ?? null, lastType: info.type, attempts: 1, triedProxies: [t.id], retryAt: null
+    }));
+    await router.apply();
+    log.add("routed-subresource", { domain, parent: parent.domain, via: t.id });
+    await maybeReload(info.tabId, parent.domain);
     return next;
   }
 
@@ -176,11 +251,29 @@ export function createLadder(ctx) {
     return applyRung(domain, "proxy", info);
   }
 
+  // Which transports did the browser actually try? Only connection-to-proxy
+  // failures make it fall over down the chain; anything else (the proxy
+  // answered but the site didn't) means only the primary was used.
+  async function triedChain(domain, cur, err) {
+    const failover = err?.kind === KIND.PROXY && err.code !== "SOCKS_CONNECTION_HOST_UNREACHABLE";
+    if (!failover) return [cur.proxyId];
+    const compiled = await router.compile();
+    const chain = (compiled.routes?.[domain] || []).map((t) => t.id);
+    return chain.length ? chain : [cur.proxyId];
+  }
+
   /** A navigation to a domain we ARE routing failed: that route isn't working. */
   async function onRouteFailure(domain, info) {
     const cur = (await allPolicies())[domain] || null;
     if (!isRouted(cur)) return cur;
-    await health.record(cur.proxyId, false);
+    const chain = await triedChain(domain, cur, info.err);
+
+    // A failed page doesn't prove the proxy is broken (the site may be down
+    // everywhere); let a probe decide each transport's health.
+    for (const id of chain) {
+      if (ctx.verifyTransport) ctx.verifyTransport(id).catch(() => {});
+      else health.record(id, false).catch(() => {});
+    }
 
     if (cur.pinned) {
       // The user chose this route: report the problem, never auto-climb or
@@ -188,8 +281,8 @@ export function createLadder(ctx) {
       return update(domain, (p) => ({ status: STATUS.NEEDS_USER, lastError: info.err?.raw ?? null, failures: p.failures + 1 }));
     }
     if ((cur.attempts || 0) >= MAX_ATTEMPTS) return exhaust(domain, "max-attempts", info.err?.raw);
-    const tried = [...new Set([...(cur.triedProxies || []), cur.proxyId])];
-    log.add("route-failed", { domain, via: cur.proxyId, error: info.err?.code });
+    const tried = [...new Set([...(cur.triedProxies || []), ...chain])];
+    log.add("route-failed", { domain, via: cur.proxyId, chain, error: info.err?.code });
     return routeVia(domain, { ...info, type: cur.lastType }, tried);
   }
 
@@ -202,12 +295,30 @@ export function createLadder(ctx) {
 
     if (isRouted(p)) {
       const stale = !p.lastVerified || now() - p.lastVerified > 60 * 60 * 1000;
-      if (p.status === STATUS.FIXED && !stale) return p;
-      await health.record(p.proxyId, true);
+      if (p.status === STATUS.FIXED && !stale) {
+        // Remember the site is in use (throttled), so a direct re-check never
+        // disturbs it mid-session.
+        if (now() - (p.lastVisited || 0) > 5 * 60 * 1000) await update(domain, () => ({ lastVisited: now() }));
+        return p;
+      }
+      // With a failover chain the page may have come through a fallback, so
+      // only a single-transport (pinned) route proves its transport works.
+      if (p.pinned) await health.record(p.proxyId, true);
       const next = await update(domain, (q) => ({
-        status: STATUS.FIXED, lastVerified: now(), successes: q.successes + 1,
-        attempts: 0, retryCount: 0, triedProxies: [q.proxyId]
+        status: STATUS.FIXED, lastVerified: now(), lastVisited: now(), successes: q.successes + 1,
+        attempts: 0, retryCount: 0, triedProxies: [q.proxyId],
+        recheckAt: q.recheckAt || now() + RECHECK_MS[0]
       }));
+      // Bundle members load as subresources (no navigation of their own):
+      // the parent page working is their verification too.
+      await store.tx(["policies"], (d) => {
+        for (const s of Object.values(d.policies || {})) {
+          if ((s.via === "bundle" || s.via === "subresource") && s.parent === domain && s.status === STATUS.ROUTING) {
+            s.status = STATUS.FIXED;
+            s.lastVerified = now();
+          }
+        }
+      });
       if (p.status !== STATUS.FIXED) log.add("verified", { domain, via: p.proxyId });
       return next;
     }
@@ -228,6 +339,52 @@ export function createLadder(ctx) {
   }
 
   // ---- maintenance ----------------------------------------------------------
+
+  /**
+   * De-escalation: blocks get lifted. Re-check routed sites on their direct
+   * path now and then; two consecutive direct passes (an hour apart) demote a
+   * site back to direct, full-speed. directCheck(policy) → {ok}|{inconclusive}.
+   */
+  async function recheckDue(directCheck, { max = 3 } = {}) {
+    if (!directCheck) return 0;
+    const due = Object.values(await allPolicies())
+      .filter((p) => isRouted(p) && p.status === STATUS.FIXED && !p.pinned && !p.via && p.recheckAt && p.recheckAt <= now())
+      .slice(0, max);
+    let demoted = 0;
+    for (const p of due) {
+      const r = await directCheck(p).catch(() => ({ inconclusive: true }));
+      if (r.inconclusive) {
+        await update(p.domain, () => ({ recheckAt: now() + 6 * 3600e3 }));
+      } else if (r.ok && (p.directPasses || 0) + 1 >= 2) {
+        await demote(p.domain);
+        demoted++;
+      } else if (r.ok) {
+        await update(p.domain, () => ({ directPasses: 1, recheckAt: now() + 3600e3 }));
+      } else {
+        const n = (p.recheckCount || 0) + 1;
+        await update(p.domain, () => ({ directPasses: 0, recheckCount: n, recheckAt: now() + RECHECK_MS[Math.min(n, RECHECK_MS.length - 1)] }));
+      }
+    }
+    return demoted;
+  }
+
+  async function demote(domain) {
+    await store.tx(["policies"], (d) => {
+      const all = d.policies || {};
+      for (const [k, s] of Object.entries(all)) {
+        if ((s.via === "bundle" || s.via === "subresource") && s.parent === domain) delete all[k];
+      }
+      if (all[domain]) {
+        all[domain] = {
+          ...all[domain], rung: "direct", proxyId: null, status: STATUS.FIXED, directPasses: 0,
+          recheckAt: null, recheckCount: 0, triedProxies: [], lastVerified: now(), updatedAt: now()
+        };
+      }
+      d.policies = all;
+    });
+    await router.apply();
+    log.add("demoted", { domain, reason: "works directly again" });
+  }
 
   /** Re-enter exhausted domains whose backoff elapsed (or all, when forced). */
   async function retryDue({ force = false } = {}) {
@@ -297,10 +454,16 @@ export function createLadder(ctx) {
     return (await allPolicies())[domain];
   }
 
+  // Forget a domain: its policy, the bundle members it brought along, and
+  // every diagnosed host under it.
   async function clearDomain(domain) {
     await store.tx(["policies", "sites"], (d) => {
-      if (d.policies) delete d.policies[domain];
-      if (d.sites) delete d.sites[domain];
+      for (const [k, p] of Object.entries(d.policies || {})) {
+        if (k === domain || ((p.via === "bundle" || p.via === "subresource") && p.parent === domain)) delete d.policies[k];
+      }
+      for (const host of Object.keys(d.sites || {})) {
+        if (lookupDomain(host, { [domain]: true })) delete d.sites[host];
+      }
     });
     await router.apply();
   }
@@ -310,5 +473,5 @@ export function createLadder(ctx) {
     await router.apply();
   }
 
-  return { policyFor, onBlocked, onRouteFailure, onSuccess, retryDue, rehome, setRung, clearDomain, clearAll };
+  return { policyFor, onBlocked, onRouteFailure, onSuccess, routeSubresource, retryDue, recheckDue, demote, rehome, setRung, clearDomain, clearAll };
 }

@@ -68,3 +68,23 @@ test("Firefox: routing survives the event page being suspended (idle > timeout)"
     { timeout: 20000, message: "a routed subdomain to load after the background was suspended" });
   assert.ok(socks.hosts().includes("sub.blocked.test"));
 });
+
+test("Firefox: discovery finds a proxy listening on a well-known port (probe markers via onRequest)", { skip }, async () => {
+  const { DISCOVERY_CANDIDATES } = await import("../../src/background/probe.js");
+  const free = (p) => new Promise((res) => { const s = net.createServer().once("error", () => res(false)).listen(p, "127.0.0.1", () => s.close(() => res(true))); });
+  let port = null;
+  for (const c of DISCOVERY_CANDIDATES.filter((c) => c.scheme === "socks5" && ![9150, 9050].includes(c.port))) {
+    if (await free(c.port)) { port = c.port; break; }
+  }
+  assert.ok(port, "a candidate port is free");
+  const local = await startSocks5({ port, resolve: () => ({ host: "127.0.0.1", port: target.port }) });
+  try {
+    await ff.openControl();
+    const r = await ff.send("discoverLocalProxies");
+    assert.equal(r?.ok, true, JSON.stringify(r));
+    assert.ok(r.found.some((f) => f.port === port), `found: ${JSON.stringify(r.found)}`);
+    assert.ok(local.log.some((l) => l.host === "connectivitycheck.gstatic.com" && l.port === 80), "plain-HTTP probe, routed by marker");
+  } finally {
+    await local.close();
+  }
+});

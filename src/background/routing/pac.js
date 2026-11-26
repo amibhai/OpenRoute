@@ -39,8 +39,9 @@ export function chainDirective(transports) {
 export function buildPac(compiled) {
   const routes = {};
   for (const [domain, chain] of Object.entries(compiled.routes || {})) routes[domain] = chainDirective(chain);
+  // Probe ids travel URL-encoded in the query string; key them that way.
   const probes = {};
-  for (const [id, chain] of Object.entries(compiled.probes || {})) probes[id] = chainDirective(chain);
+  for (const [id, chain] of Object.entries(compiled.probes || {})) probes[encodeURIComponent(id)] = chainDirective(chain);
   const def = compiled.defaultRoute?.length ? chainDirective(compiled.defaultRoute) : "DIRECT";
   const lit = (o) => JSON.stringify(JSON.stringify(o));
   return asciiOnly(`// OpenRoute split-tunnel PAC (generated, do not edit)

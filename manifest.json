@@ -10,7 +10,12 @@
     "storage",
     "proxy",
     "alarms",
-    "nativeMessaging"
+    "nativeMessaging",
+    "webRequest",
+    "webRequestAuthProvider"
+  ],
+  "optional_permissions": [
+    "privacy"
   ],
   "host_permissions": [
     "https://cloudflare-dns.com/*",
@@ -20,11 +25,23 @@
     "https://8.8.8.8/*",
     "https://8.8.4.4/*",
     "https://dns.quad9.net/*",
-    "https://9.9.9.9/*"
+    "https://9.9.9.9/*",
+    "https://149.112.112.112/*",
+    "https://unfiltered.adguard-dns.com/*",
+    "https://dns.mullvad.net/*",
+    "https://dns.nextdns.io/*",
+    "https://doh.dns.sb/*",
+    "https://185.222.222.222/*",
+    "http://connectivitycheck.gstatic.com/*",
+    "http://detectportal.firefox.com/*",
+    "http://captive.apple.com/*"
   ],
   "background": {
     "service_worker": "src/background/index.js",
     "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -41,5 +58,8 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
-  }
+  },
+  "optional_host_permissions": [
+    "<all_urls>"
+  ]
 }

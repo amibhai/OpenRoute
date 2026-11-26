@@ -12,19 +12,22 @@ export const DOWN_AFTER = 3;
 export const DOWN_COOLDOWN_MS = 10 * 60 * 1000;
 
 export function blankHealth() {
-  return { state: HEALTH.UNKNOWN, successes: 0, failures: 0, streak: 0, lastOk: null, lastFail: null, latencyMs: null };
+  return { state: HEALTH.UNKNOWN, successes: 0, failures: 0, streak: 0, lastOk: null, lastFail: null, lastProbe: null, latencyMs: null };
 }
+
+const EWMA = 0.3; // weight of the newest latency sample
 
 export function createHealth({ store, now = () => Date.now() }) {
   async function getAll() {
     return store.get("transportHealth", {});
   }
 
-  async function record(id, ok, { latencyMs } = {}) {
+  async function record(id, ok, { latencyMs, probe = false } = {}) {
     if (!id) return null;
     return store.tx(["transportHealth"], (d) => {
       const all = d.transportHealth || {};
       const h = { ...blankHealth(), ...(all[id] || {}) };
+      if (probe) h.lastProbe = now();
       if (ok) {
         h.successes += 1;
         h.streak = 0;
@@ -36,7 +39,9 @@ export function createHealth({ store, now = () => Date.now() }) {
         h.lastFail = now();
         h.state = h.streak >= DOWN_AFTER ? HEALTH.DOWN : HEALTH.DEGRADED;
       }
-      if (latencyMs != null) h.latencyMs = Math.round(latencyMs);
+      if (latencyMs != null) {
+        h.latencyMs = h.latencyMs == null ? Math.round(latencyMs) : Math.round(h.latencyMs * (1 - EWMA) + latencyMs * EWMA);
+      }
       all[id] = h;
       d.transportHealth = all;
       return h;

@@ -10,9 +10,9 @@
 //             return a Promise).
 
 import { buildPac } from "./pac.js";
-import { matchRoute, firefoxDescriptor, signature } from "./table.js";
+import { matchRoute, firefoxDescriptor, signature, hasRealRoutes, probeIdFromUrl } from "./table.js";
 
-const routeCount = (c) => Object.keys(c.routes || {}).length + Object.keys(c.probes || {}).length + (c.defaultRoute?.length ? 1 : 0);
+const routeCount = (c) => Object.keys(c.routes || {}).length + (c.defaultRoute?.length ? 1 : 0);
 
 export function createChromiumEngine(api) {
   let lastSig = null;
@@ -39,14 +39,17 @@ export function createChromiumEngine(api) {
         onConflict?.(level);
       });
     },
-    async apply(compiled) {
+    async apply(compiled, { probing = false } = {}) {
       const current = await readControl();
       if (level === "not_controllable" || level === "controlled_by_other_extensions") {
         lastSig = null;
         return { applied: false, level, count: routeCount(compiled) };
       }
       const sig = signature(compiled);
-      if (!routeCount(compiled)) {
+      // Only hold the proxy setting while something is really routed (or a
+      // health probe is running). An idle PAC would answer DIRECT for every
+      // request and silently override an OS/corporate proxy.
+      if (!hasRealRoutes(compiled) && !probing) {
         if (level === "controlled_by_this_extension") await api.proxy.settings.clear({ scope: "regular" });
         lastSig = sig;
         return { applied: true, cleared: true, level: "controllable_by_this_extension", count: 0 };
@@ -71,10 +74,15 @@ export function createFirefoxEngine(api, { loadCompiled }) {
 
   function decide(compiled, details) {
     const chain = matchRoute(compiled, details.url);
-    if (!chain || !chain.length) return { type: "direct" };
-    // No trailing {type:"direct"}: a routed domain must not fall back to the
-    // censored path. Firefox tries each proxy in order.
-    return chain.map((t) => ({ ...firefoxDescriptor(t), failoverTimeout: 5 }));
+    if (chain && chain.length) {
+      // No trailing {type:"direct"}: a routed domain must not fall back to the
+      // censored path. Firefox tries each proxy in order.
+      return chain.map((t) => ({ ...firefoxDescriptor(t), failoverTimeout: 5 }));
+    }
+    // A "direct" health probe must really go direct; anything else that isn't
+    // ours returns nothing, so Firefox applies the user's own proxy settings.
+    if (chain && probeIdFromUrl(details.url)) return { type: "direct" };
+    return undefined;
   }
 
   function ensure() {
@@ -89,7 +97,7 @@ export function createFirefoxEngine(api, { loadCompiled }) {
 
   function onRequest(details) {
     if (table) return decide(table, details);
-    return ensure().then((t) => decide(t, details), () => ({ type: "direct" }));
+    return ensure().then((t) => decide(t, details), () => undefined);
   }
 
   return {

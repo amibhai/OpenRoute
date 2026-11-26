@@ -10,6 +10,8 @@ export const BADGES = {
   "ip-block": { label: "IP block", cls: "bad" },
   "unreachable": { label: "Unreachable", cls: "warn" },
   "policy-block": { label: "Local policy", cls: "warn" },
+  "dns-blockpage": { label: "Block page", cls: "bad" },
+  "http-451": { label: "Legal block (451)", cls: "bad" },
   "unknown": { label: "Unknown", cls: "warn" }
 };
 
@@ -23,6 +25,8 @@ export const REMEDIATION = {
   "ip-block": "DNS is fine but packets to the server are dropped. Needs a proxy/tunnel — OpenRoute routes it.",
   "unreachable": "The server is unreachable and DNS couldn't be checked. It may be down or blocked at the IP level.",
   "policy-block": "Blocked by a policy or firewall on this device — not your ISP.",
+  "dns-blockpage": "The page loaded, but from a private address your resolver injected — a block page. Secure DNS fixes it at full speed; OpenRoute routes it meanwhile.",
+  "http-451": "The server (or a filter in between) answered 451 Unavailable For Legal Reasons. OpenRoute routes it through another country.",
   "unknown": "Couldn't classify the failure. OpenRoute will try routing it."
 };
 

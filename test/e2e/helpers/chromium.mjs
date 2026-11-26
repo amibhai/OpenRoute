@@ -4,7 +4,7 @@
 // Testing still honor it.)
 
 import { chromium } from "playwright";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,9 +16,16 @@ export function tempDir(prefix) {
 }
 
 // Copy just what the extension ships (no node_modules/.tools) into a temp dir.
-export function stageExtension() {
+// allUrls grants site access up front — what a user does when opting in to
+// deep detection or proxy logins on Chromium (a test can't click the prompt).
+export function stageExtension({ allUrls = false } = {}) {
   const dir = tempDir("openroute-ext-");
   for (const p of ["manifest.json", "src", "icons", "LICENSE"]) cpSync(join(ROOT, p), join(dir, p), { recursive: true });
+  if (allUrls) {
+    const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+    m.host_permissions = [...new Set([...(m.host_permissions || []), "<all_urls>"])];
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(m, null, 2));
+  }
   return dir;
 }
 
@@ -41,8 +48,8 @@ export function browserUnderTest() {
   return { name, launch: exe ? { executablePath: exe, headless: false } : null };
 }
 
-export async function launchWithExtension({ hostRules = [], extraArgs = [] } = {}) {
-  const extDir = stageExtension();
+export async function launchWithExtension({ hostRules = [], extraArgs = [], allUrls = false } = {}) {
+  const extDir = stageExtension({ allUrls });
   const profile = tempDir("openroute-profile-");
   const target = browserUnderTest();
   if (!target.launch) throw new Error(`browser "${target.name}" is not installed`);
