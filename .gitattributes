@@ -8,3 +8,13 @@
 *.ico binary
 *.zip binary
 test/server/fakes/* text eol=lf
+
+# What ships in the extension is checked out with LF everywhere, so a build
+# from any clone (Windows included) matches the release zips byte for byte.
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
