@@ -40,10 +40,11 @@ test("B5 — an exhausted domain is retried after a backoff instead of abandoned
 
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   t.mock.timers.tick(25 * 60 * 60 * 1000); // a day later — past any backoff
-  await ext.mock.fireAllAlarms();
+  await ext.mock.fireAllAlarms();          // the periodic maintenance tick
   await ext.mock.settle();
-  await ext.fail("https://flaky.example/", "net::ERR_CONNECTION_TIMED_OUT", { tabId: 11 });
 
   const pol = await ext.policy("flaky.example");
   assert.equal(pol?.status, "routing", `expected the ladder to retry; status is ${pol?.status}`);
+  assert.equal((await ext.route("https://flaky.example/")).split(";")[0].trim(), "SOCKS5 127.0.0.1:1081",
+    "the retried route is live in the PAC");
 });

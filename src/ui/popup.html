@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenRoute</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>OpenRoute</h1>
+    <p class="tag">Detect · diagnose · auto-route blocked sites</p>
+  </header>
+
+  <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+
+  <!-- Transports -->
+  <section class="card" aria-labelledby="transportsTitle">
+    <div class="card-head">
+      <span class="dot" aria-hidden="true"></span>
+      <strong id="transportsTitle">Transports</strong>
+      <span id="companionPill" class="pill" title="Native companion status">companion: checking…</span>
+    </div>
+    <ul id="transportList" class="tlist" aria-label="Transports"></ul>
+    <details>
+      <summary>Add a proxy</summary>
+      <form id="addTransportForm" class="form">
+        <input id="tLabel" placeholder="Label (e.g. My VPS)" maxlength="60" aria-label="Label" />
+        <div class="row">
+          <select id="tScheme" aria-label="Proxy type">
+            <option value="socks5">SOCKS5</option>
+            <option value="http">HTTP</option>
+            <option value="https">HTTPS</option>
+            <option value="socks4">SOCKS4</option>
+          </select>
+          <input id="tHost" placeholder="host / 127.0.0.1" aria-label="Host" required />
+          <input id="tPort" placeholder="port" inputmode="numeric" aria-label="Port" required />
+        </div>
+        <button type="submit" class="btn small primary">Add transport</button>
+        <p id="tError" class="error small" role="alert" hidden></p>
+      </form>
+      <p class="muted small">
+        No proxy yet? Run Tor Browser (SOCKS <code>127.0.0.1:9150</code>) and pick it above,
+        or install the companion for built-in Shadowsocks/Reality/Tor.
+      </p>
+    </details>
+    <details id="companionBox">
+      <summary>Connect via companion</summary>
+      <div class="form">
+        <textarea id="cLink" rows="2" placeholder="ss:// or vless:// link — one per line for an auto-rotating pool" aria-label="Share links"></textarea>
+        <input id="cLabel" placeholder="Label (e.g. My VPS / Pool)" maxlength="60" aria-label="Companion label" />
+        <div class="row">
+          <button id="cConnect" class="btn small primary" type="button">Connect</button>
+          <button id="cDisconnect" class="btn small ghost" type="button">Disconnect all</button>
+        </div>
+        <div class="row">
+          <select id="cTorMode" aria-label="Tor mode">
+            <option value="direct">Tor · direct</option>
+            <option value="obfs4">Tor · obfs4 bridge</option>
+            <option value="snowflake">Tor · snowflake</option>
+          </select>
+          <button id="cTor" class="btn small" type="button">Connect Tor</button>
+        </div>
+        <p id="cStatus" class="muted small" role="status" aria-live="polite"></p>
+      </div>
+      <p class="muted small">
+        Runs your VPS transport (Shadowsocks-2022 / VLESS-Reality), an auto-rotating
+        pool, or free-network <b>Tor</b> through the local companion. Requires the companion +
+        <code>sing-box</code>/<code>tor</code> installed.
+      </p>
+    </details>
+  </section>
+
+  <!-- Secure DNS -->
+  <section class="card" aria-labelledby="dnsTitle">
+    <div class="card-head"><span class="dot" aria-hidden="true"></span><strong id="dnsTitle">Secure DNS (DoH)</strong></div>
+    <p class="muted">The zero-latency fix for DNS-based blocks. Turn it on once.</p>
+    <button id="openDns" class="btn primary" type="button">Open Secure DNS settings</button>
+    <ol id="dnsSteps" class="steps small" hidden></ol>
+  </section>
+
+  <!-- Controls -->
+  <section class="controls" aria-label="Settings">
+    <label class="switch"><input type="checkbox" id="autoRoute" /><span>Auto-route</span></label>
+    <label class="switch"><input type="checkbox" id="autoReload" /><span>Auto-reload</span></label>
+    <label class="switch"><input type="checkbox" id="detectionToggle" /><span>Detect</span></label>
+    <label class="provider">DoH
+      <select id="providerSelect">
+        <option value="cloudflare">Cloudflare</option>
+        <option value="google">Google</option>
+        <option value="quad9">Quad9</option>
+      </select>
+    </label>
+  </section>
+
+  <!-- Sites -->
+  <section class="list-head">
+    <h2>Sites (<span id="count">0</span>)</h2>
+    <button id="clearAll" class="btn ghost" type="button">Clear</button>
+  </section>
+  <ul id="list" class="list" aria-label="Diagnosed sites"></ul>
+  <p id="empty" class="empty muted">No blocks yet. Browse normally — sites that fail show up here, diagnosed and routed.</p>
+
+  <footer>
+    <p class="muted small">
+      Circumvention, <b>not</b> anonymity — a proxy you run is tied to you. No tool is unblockable;
+      OpenRoute stacks fallbacks so something usually gets through. Free &amp; open source.
+    </p>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

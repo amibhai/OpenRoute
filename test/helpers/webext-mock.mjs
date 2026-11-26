@@ -185,6 +185,9 @@ export function createWebExtMock({ flavor = "chromium", extensionId = "openroute
       throw new Error("proxy.settings.set: invalid mode");
     } else if (value.mode === "pac_script" && !(value.pacScript && (value.pacScript.data || value.pacScript.url))) {
       throw new Error("proxy.settings.set: pac_script needs data or url");
+    } else if (value.mode === "pac_script" && /[\u0080-￿]/.test(value.pacScript.data || "")) {
+      // Real Chromium behavior, found by the e2e suite.
+      throw new Error("'pacScript.data' supports only ASCII code(encode URLs in Punycode format).");
     }
   });
 

@@ -9,7 +9,7 @@
 <body>
   <main class="wrap">
     <header class="hero">
-      <img src="icons/icon128.png" alt="OpenRoute" width="56" height="56" />
+      <img src="../../icons/icon128.png" alt="OpenRoute" width="56" height="56" />
       <div>
         <h1>OpenRoute</h1>
         <p class="sub">Detect what's blocking a site — then route only that site around it, at full speed.</p>
@@ -22,9 +22,10 @@
         <div>
           <h2>Turn on Secure DNS</h2>
           <p>The #1 cause of blocking is DNS tampering, and this is the zero-latency fix.
-             It takes one toggle in Chrome and OpenRoute will confirm it worked.</p>
+             It takes one toggle in your browser and OpenRoute will confirm it worked.</p>
           <button id="openDns" class="btn primary">Open Secure DNS settings</button>
           <p class="hint">Set <b>Use secure DNS</b> → <b>Cloudflare (1.1.1.1)</b> or <b>Google</b>.</p>
+          <ol id="dnsSteps" class="hint" hidden></ol>
         </div>
       </div>
     </section>
@@ -73,6 +74,6 @@
       <span class="muted">You can reopen this from the extension's details page.</span>
     </footer>
   </main>
-  <script src="onboarding.js"></script>
+  <script type="module" src="onboarding.js"></script>
 </body>
 </html>

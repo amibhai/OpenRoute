@@ -175,6 +175,19 @@ footer { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px;
 .controls { flex-wrap: wrap; }
 .controls .switch span { font-size: 12px; }
 
+/* status banner + inline errors */
+.banner {
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px;
+  background: var(--warn-bg); color: var(--warn);
+}
+.banner.bad { background: var(--bad-bg); color: var(--bad); }
+.banner.good { background: var(--good-bg); color: var(--good); }
+.error { color: var(--bad); margin: 0; }
+.steps { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+[hidden] { display: none !important; }
+
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
 .rungpick { display: flex; align-items: center; gap: 4px; color: var(--muted); }
 .rungpick select {
   background: var(--bg); color: var(--fg);
