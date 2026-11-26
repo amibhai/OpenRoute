@@ -5,13 +5,13 @@ server and prints the share links you paste into OpenRoute. It's the strongest
 rung of the ladder: a transport only you control.
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/amibhai/OpenRoute/main/server/install-server.sh
+curl -fsSLO https://github.com/amibhai/OpenRoute/releases/latest/download/install-server.sh
 less install-server.sh          # it runs as root, so read it first; it's written to be read
 sudo bash install-server.sh
 ```
 
-You can also take `install-server.sh` from a [release](https://github.com/amibhai/OpenRoute/releases) and check
-it against the release's `SHA256SUMS`.
+That's the script from the latest [release](https://github.com/amibhai/OpenRoute/releases). Its SHA-256 is in the
+release's `SHA256SUMS`, and `sha256sum install-server.sh` should match.
 
 Any systemd Linux works: Debian, Ubuntu, Fedora, RHEL / Alma / Rocky and others. Supported
 architectures are amd64, arm64, armv7 and i386. A $5 box is plenty.

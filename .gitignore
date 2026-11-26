@@ -10,7 +10,6 @@ desktop.ini
 *~
 
 # Local tooling
-.claude/
 *.log
 
 # Packaged builds / signing keys — never commit these
