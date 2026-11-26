@@ -1,53 +1,102 @@
-// Human-readable labels shared by the popup and onboarding.
+// Message keys (see _locales/*/messages.json) and display classes for the
+// background's vocabulary. Pages translate with t(key); nothing here is
+// user-visible text itself.
 
-export const BADGES = {
-  "dns-tampering": { label: "DNS tampering", cls: "good" },
-  "dns-nxdomain": { label: "Doesn't exist", cls: "warn" },
-  "dns-unverified": { label: "DNS blocked", cls: "bad" },
-  "doh-tampered": { label: "DNS poisoned", cls: "bad" },
-  "sni-dpi": { label: "SNI / DPI", cls: "warn" },
-  "tls-mitm": { label: "TLS intercepted", cls: "bad" },
-  "ip-block": { label: "IP block", cls: "bad" },
-  "unreachable": { label: "Unreachable", cls: "warn" },
-  "policy-block": { label: "Local policy", cls: "warn" },
-  "dns-blockpage": { label: "Block page", cls: "bad" },
-  "http-451": { label: "Legal block (451)", cls: "bad" },
-  "unknown": { label: "Unknown", cls: "warn" }
+// Diagnosis type → [label key, remedy key, tone]
+export const TYPE = {
+  "dns-tampering": ["typeDnsTampering", "remedyDnsTampering", "good"],
+  "dns-nxdomain": ["typeDnsNxdomain", "remedyDnsNxdomain", "warn"],
+  "dns-unverified": ["typeDnsUnverified", "remedyDnsUnverified", "bad"],
+  "doh-tampered": ["typeDohTampered", "remedyDohTampered", "bad"],
+  "sni-dpi": ["typeSniDpi", "remedySniDpi", "warn"],
+  "tls-mitm": ["typeTlsMitm", "remedyTlsMitm", "bad"],
+  "ip-block": ["typeIpBlock", "remedyIpBlock", "bad"],
+  "unreachable": ["typeUnreachable", "remedyUnreachable", "warn"],
+  "policy-block": ["typePolicyBlock", "remedyPolicyBlock", "warn"],
+  "dns-blockpage": ["typeDnsBlockpage", "remedyDnsBlockpage", "bad"],
+  "http-451": ["typeHttp451", "remedyHttp451", "bad"],
+  "unknown": ["typeUnknown", "remedyUnknown", "warn"]
 };
+export const typeOf = (type) => TYPE[type] || TYPE.unknown;
 
-export const REMEDIATION = {
-  "dns-tampering": "Your resolver is faking DNS. Secure DNS fixes this at full speed; until then OpenRoute can route it.",
-  "dns-nxdomain": "Encrypted DNS says this domain doesn't exist — check the address. Read-only copies may still work.",
-  "dns-unverified": "DNS failed and encrypted DNS is unreachable too — likely deeper DNS blocking. OpenRoute routes it (the proxy resolves names).",
-  "doh-tampered": "Even encrypted DNS returned a fake/private address. OpenRoute routes around it.",
-  "sni-dpi": "The connection was reset during the TLS handshake — SNI/DPI filtering. ECH or a proxy defeats it.",
-  "tls-mitm": "The certificate was invalid — something is intercepting the connection (often a block page). OpenRoute routes it.",
-  "ip-block": "DNS is fine but packets to the server are dropped. Needs a proxy/tunnel — OpenRoute routes it.",
-  "unreachable": "The server is unreachable and DNS couldn't be checked. It may be down or blocked at the IP level.",
-  "policy-block": "Blocked by a policy or firewall on this device — not your ISP.",
-  "dns-blockpage": "The page loaded, but from a private address your resolver injected — a block page. Secure DNS fixes it at full speed; OpenRoute routes it meanwhile.",
-  "http-451": "The server (or a filter in between) answered 451 Unavailable For Legal Reasons. OpenRoute routes it through another country.",
-  "unknown": "Couldn't classify the failure. OpenRoute will try routing it."
-};
+// Blocks Secure DNS fixes at full speed.
+export const DNS_TYPES = new Set(["dns-tampering", "dns-blockpage"]);
 
+// Policy status → [label key, tone]
 export const STATUS = {
-  blocked: { label: "blocked", cls: "bad" },
-  routing: { label: "routing…", cls: "warn" },
-  fixed: { label: "✓ working", cls: "good" },
-  "needs-user": { label: "needs you", cls: "warn" },
-  exhausted: { label: "no route left", cls: "bad" },
-  manual: { label: "manual", cls: "muted" }
+  blocked: ["statusBlocked", "bad"],
+  routing: ["statusRouting", "warn"],
+  fixed: ["statusFixed", "good"],
+  "needs-user": ["statusNeedsUser", "warn"],
+  exhausted: ["statusExhausted", "bad"],
+  manual: ["statusManual", "muted"]
 };
 
-export const EXHAUSTED_REASON = {
-  "no-transport": "No transport to route through — add one above.",
-  "all-transports-failed": "Every transport failed for this site.",
-  "max-attempts": "Too many failed attempts.",
-  "transport-removed": "Its transport was removed.",
-  "auto-route-off": "Auto-route is off.",
-  "no-proxy-api": "This browser can't route sites (no proxy API)."
+// A site seen failing but not (or no longer) handled by a policy.
+export const STATUS_SEEN = ["statusSeen", "muted"];
+
+export const EXHAUSTED = {
+  "no-transport": "exhaustedNoTransport",
+  "all-transports-failed": "exhaustedAllFailed",
+  "max-attempts": "exhaustedMaxAttempts",
+  "transport-removed": "exhaustedTransportRemoved",
+  "auto-route-off": "exhaustedAutoRouteOff",
+  "no-proxy-api": "exhaustedNoProxyApi"
 };
 
-export const RUNG_LABEL = { direct: "Direct", doh: "Secure DNS", ech: "Secure DNS + ECH", proxy: "Proxy", fallback: "Read-only" };
-export const HEALTH_CLS = { up: "good", degraded: "warn", down: "bad", unknown: "muted" };
-export const RESOLVER_LABELS = { cloudflare: "Cloudflare", google: "Google", quad9: "Quad9" };
+export const RUNG = { direct: "rungDirect", doh: "rungDoh", ech: "rungEch", proxy: "rungProxy", fallback: "rungFallback" };
+
+// Transport health → [label key, tone]
+export const HEALTH = {
+  up: ["healthUp", "good"],
+  degraded: ["healthDegraded", "warn"],
+  down: ["healthDown", "bad"],
+  unknown: ["healthUnknown", "muted"]
+};
+
+// Resolver names are brands: shown as-is in every language.
+export const RESOLVER_NAMES = {
+  cloudflare: "Cloudflare", google: "Google", quad9: "Quad9", adguard: "AdGuard (unfiltered)",
+  mullvad: "Mullvad", nextdns: "NextDNS", dnssb: "DNS.SB"
+};
+
+export const EVENT = {
+  blocked: "eventBlocked",
+  routed: "eventRouted",
+  verified: "eventVerified",
+  "route-failed": "eventRouteFailed",
+  exhausted: "eventExhausted",
+  retry: "eventRetry",
+  rehomed: "eventRehomed",
+  demoted: "eventDemoted",
+  "works-direct": "eventWorksDirect",
+  manual: "eventManual",
+  bundle: "eventBundle",
+  "routed-subresource": "eventRoutedSubresource",
+  "reload-skipped": "eventReloadSkipped",
+  discovery: "eventDiscovery",
+  "doh-via-transport": "eventDohViaTransport",
+  "companion-port": "eventCompanionPort",
+  "proxy-auth-rejected": "eventProxyAuthRejected",
+  "init-error": "eventInitError",
+  "router-error": "eventRouterError",
+  error: "eventError"
+};
+
+// "manual" events by what the user chose.
+export const EVENT_MANUAL = { proxy: "eventManualProxy", auto: "eventManualAuto", other: "eventManual" };
+
+export const TOR_MODES = ["auto", "direct", "obfs4", "snowflake", "meek", "webtunnel"];
+export const TOR_MODE = Object.fromEntries(TOR_MODES.map((m) => [m, `torMode_${m}`]));
+
+export const MODE_HELP = { smart: "modeSmartHelp", full: "modeFullHelp", off: "modeOffHelp" };
+
+export const ENGINE = { chromium: "engineChromium", firefox: "engineFirefox", none: "engineNone" };
+
+// chrome.proxy levelOfControl → key
+export const CONTROL = {
+  controllable_by_this_extension: "controlFree",
+  controlled_by_this_extension: "controlOurs",
+  controlled_by_other_extensions: "controlOther",
+  not_controllable: "controlLocked"
+};

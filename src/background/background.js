@@ -27,6 +27,7 @@ import { hasRealRoutes } from "./routing/table.js";
 import { STATUS, isRouted, pruneSites } from "./policy.js";
 import { registrableDomain } from "./domains/psl.js";
 import { hostFromUrl, isLocalHost, isIpLiteral, lookupDomain, normalizeHost } from "../shared/hosts.js";
+import { translate } from "../shared/i18n.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({
   detectionEnabled: true,
@@ -48,8 +49,15 @@ export const MAINTENANCE_ALARM = "openroute-maintenance";
 const MAINTENANCE_PERIOD_MIN = 5;
 const LEGACY_ALARMS = ["openroute-health"];
 
+export const MENU = Object.freeze({ toggle: "openroute-toggle", never: "openroute-never", dashboard: "openroute-dashboard" });
+export const COMMAND_TOGGLE = "toggle-route";
+// Per-tab badge: ✓ this site is routed and working, … being routed, ! blocked.
+const BADGE = Object.freeze({ good: "#146c43", warn: "#8a5200", bad: "#b42318", count: "#b42318" });
+const WEB = /^https?:/i;
+
 export function createBackground({ api }) {
   const caps = detectCapabilities(api);
+  const t = (key, vars) => translate(api, key, vars);
   const store = createStore(api.storage.local, { name: "local", onError: (e) => console.warn("OpenRoute store:", e) });
   const session = createStore(createSessionArea(api), { name: "session" });
   const ctx = { api, caps, store, session };
@@ -147,7 +155,7 @@ export function createBackground({ api }) {
     await step("migrate", () => migrate(store));
     await step("browser", async () => { browser = await detectBrowser(api); });
     await step("alarms", ensureAlarms);
-    await step("badge-color", () => api.action?.setBadgeBackgroundColor?.({ color: "#c0392b" }));
+    await step("badge-color", () => api.action?.setBadgeBackgroundColor?.({ color: BADGE.count }));
     await step("router", () => ctx.router.apply());
     await step("webrtc", async () => { if ((await ctx.settings.get()).webrtcProtection) await ctx.applyWebRtc(); });
     await step("badge", updateBadge);
@@ -163,10 +171,143 @@ export function createBackground({ api }) {
     }
   }
 
+  // The global badge counts sites that need the user; a tab showing a site
+  // OpenRoute handles gets its own badge instead.
   async function updateBadge() {
     const policies = await store.get("policies", {});
     const n = Object.values(policies).filter((p) => p.status === STATUS.NEEDS_USER || p.status === STATUS.EXHAUSTED).length;
     await api.action?.setBadgeText?.({ text: n ? String(n) : "" });
+    const tabs = await session.get("tabHosts", {});
+    for (const [id, host] of Object.entries(tabs)) await updateTabBadge(Number(id), host);
+  }
+
+  async function tabBadge(host) {
+    const pol = host ? await ctx.ladder.policyFor(host) : null;
+    if (!pol) return null;
+    if (pol.status === STATUS.FIXED && isRouted(pol)) return { text: "✓", color: BADGE.good, title: t("badgeRouted", { domain: pol.domain }) };
+    if (pol.status === STATUS.ROUTING) return { text: "…", color: BADGE.warn, title: t("badgeRouting", { domain: pol.domain }) };
+    if ([STATUS.BLOCKED, STATUS.NEEDS_USER, STATUS.EXHAUSTED].includes(pol.status)) return { text: "!", color: BADGE.bad, title: t("badgeBlocked", { domain: pol.domain }) };
+    return null;
+  }
+
+  // What each tab's badge shows now, so refreshing every tab only touches
+  // those whose badge changes (a busy session has hundreds of tabs).
+  const shownBadges = new Map();
+
+  async function updateTabBadge(tabId, host) {
+    if (!Number.isInteger(tabId) || tabId < 0 || !api.action?.setBadgeText) return;
+    const b = await tabBadge(host);
+    const key = b ? `${b.text}|${b.color}|${b.title}` : "";
+    if (shownBadges.get(tabId) === key) return;
+    try {
+      // null hands the tab back to the global badge.
+      await api.action.setBadgeText({ tabId, text: b ? b.text : null });
+    } catch {
+      try {
+        await api.action.setBadgeText({ tabId, text: b ? b.text : "" });
+      } catch {
+        return; // the tab is gone
+      }
+    }
+    if (b) await api.action.setBadgeBackgroundColor?.({ tabId, color: b.color }).catch(() => {});
+    await api.action.setTitle?.({ tabId, title: b ? b.title : t("extName") }).catch(() => {});
+    shownBadges.set(tabId, key);
+  }
+
+  // Which site each tab shows (session-scoped: tab ids don't outlive the browser).
+  async function trackTab(tabId, url) {
+    if (!Number.isInteger(tabId) || tabId < 0) return;
+    const host = WEB.test(url || "") ? hostFromUrl(url) : null;
+    const known = host && !isLocalHost(host) ? host : null;
+    await session.tx(["tabHosts"], (d) => {
+      const m = d.tabHosts || {};
+      if (known) m[tabId] = known;
+      else delete m[tabId];
+      d.tabHosts = m;
+    });
+    shownBadges.delete(tabId); // Firefox clears a tab's badge when it navigates
+    await updateTabBadge(tabId, known);
+  }
+
+  async function forgetTab(tabId) {
+    shownBadges.delete(tabId);
+    await session.tx(["tabHosts"], (d) => {
+      if (d.tabHosts) delete d.tabHosts[tabId];
+    });
+  }
+
+  // ---- "route this site" (popup, context menu, keyboard shortcut) -------------
+
+  function openDashboard(section = "") {
+    return api.tabs.create({ url: api.runtime.getURL(`src/ui/options.html${section ? `#${section}` : ""}`) });
+  }
+
+  async function reloadTab(tabId) {
+    if (Number.isInteger(tabId) && tabId >= 0) await api.tabs.reload(tabId).catch(() => {});
+  }
+
+  // Routed → stop routing (back to automatic). Not routed → route it now
+  // through the best transport, or open the dashboard to add one.
+  async function toggleSite(url, tabId) {
+    const host = WEB.test(String(url || "")) ? hostFromUrl(url) : null;
+    if (!host || isLocalHost(host)) return { done: false, reason: "not-a-website" };
+    const pol = await ctx.ladder.policyFor(host);
+    if (pol && (isRouted(pol) || pol.pinned)) {
+      await ctx.ladder.clearDomain(pol.domain);
+      await updateBadge();
+      await reloadTab(tabId);
+      return { done: true, routed: false, domain: pol.domain };
+    }
+    const domain = pol?.domain || (await policyDomainFor(host));
+    const best = await ctx.transports.pickBest();
+    if (!best) {
+      await openDashboard("transports").catch(() => {});
+      return { done: false, reason: "no-transport", domain };
+    }
+    await ctx.ladder.setRung(domain, "proxy", best.id);
+    await updateBadge();
+    await reloadTab(tabId);
+    return { done: true, routed: true, domain, via: best.id };
+  }
+
+  async function neverRouteSite(url, tabId) {
+    const host = WEB.test(String(url || "")) ? hostFromUrl(url) : null;
+    if (!host || isLocalHost(host)) return { done: false, reason: "not-a-website" };
+    const domain = (await ctx.ladder.policyFor(host))?.domain || (await policyDomainFor(host));
+    await handlers.setRule({ domain, list: "never" });
+    await ctx.ladder.clearDomain(domain);
+    await updateBadge();
+    await reloadTab(tabId);
+    return { done: true, domain };
+  }
+
+  function menus() {
+    return api.contextMenus || api.menus || null;
+  }
+
+  async function ensureMenus() {
+    const m = menus();
+    if (!m?.create) return;
+    await m.removeAll?.();
+    const pages = ["http://*/*", "https://*/*"];
+    m.create({ id: MENU.toggle, title: t("menuToggleRoute"), contexts: ["page"], documentUrlPatterns: pages });
+    m.create({ id: MENU.never, title: t("menuNeverRoute"), contexts: ["page"], documentUrlPatterns: pages });
+    m.create({ id: MENU.dashboard, title: t("menuDashboard"), contexts: ["action"] });
+  }
+
+  async function onMenuClicked(info, tab) {
+    await ready();
+    if (info?.menuItemId === MENU.dashboard) return openDashboard();
+    const url = info?.pageUrl || tab?.url;
+    if (info?.menuItemId === MENU.toggle) return toggleSite(url, tab?.id);
+    if (info?.menuItemId === MENU.never) return neverRouteSite(url, tab?.id);
+  }
+
+  async function onCommand(command, tab) {
+    if (command !== COMMAND_TOGGLE) return;
+    await ready();
+    const active = tab?.url ? tab : (await api.tabs.query({ active: true, currentWindow: true }).catch(() => []))[0];
+    return toggleSite(active?.url, active?.id);
   }
 
   async function remoteDiagnosisAllowed() {
@@ -246,6 +387,7 @@ export function createBackground({ api }) {
   async function onNavigationError(details) {
     await ready();
     if (!isTopLevel(details)) return;
+    await trackTab(details.tabId, details.url);
     const host = hostFromUrl(details.url);
     if (!host || isLocalHost(host)) return;
     if (!(await ctx.settings.get()).detectionEnabled) return;
@@ -320,9 +462,15 @@ export function createBackground({ api }) {
     await ready();
     if (!isTopLevel(details)) return;
     const host = hostFromUrl(details.url);
-    if (!host || isLocalHost(host)) return;
+    if (!host || isLocalHost(host)) return trackTab(details.tabId, null);
     const changed = await ctx.ladder.onSuccess(host, { tabId: details.tabId });
     if (changed) await updateBadge();
+    await trackTab(details.tabId, details.url);
+  }
+
+  async function onNavigationCommitted(details) {
+    await ready();
+    if (isTopLevel(details)) await trackTab(details.tabId, details.url);
   }
 
   async function neverRoute(host) {
@@ -392,6 +540,7 @@ export function createBackground({ api }) {
 
   function onInstalled(details) {
     ready();
+    ensureMenus().catch(() => {});
     if (details?.reason === "install") {
       api.tabs.create({ url: api.runtime.getURL("src/ui/onboarding.html") }).catch(() => {});
     }
@@ -401,7 +550,11 @@ export function createBackground({ api }) {
     updateBadge,
     getBrowser: () => browser,
     getAccess: () => accessStatus(api, caps),
-    diagnoseHost
+    diagnoseHost,
+    policyDomainFor,
+    toggleSite,
+    neverRouteSite,
+    openDashboard
   });
 
   function isTrustedSender(sender) {
@@ -462,10 +615,14 @@ export function createBackground({ api }) {
         else if (area === "session") session.noteChanges(changes);
       });
       api.runtime.onInstalled.addListener(onInstalled);
-      api.runtime.onStartup?.addListener(() => { ready(); });
+      api.runtime.onStartup?.addListener(() => { ready(); ensureMenus().catch(() => {}); });
       api.runtime.onMessage.addListener(onMessage);
       api.webNavigation.onErrorOccurred.addListener(guard("navigation-error", onNavigationError));
       api.webNavigation.onCompleted.addListener(guard("navigation-completed", onNavigationCompleted));
+      api.webNavigation.onCommitted?.addListener(guard("navigation-committed", onNavigationCommitted));
+      api.tabs.onRemoved?.addListener(guard("tab-removed", forgetTab));
+      menus()?.onClicked?.addListener(guard("menu", onMenuClicked));
+      api.commands?.onCommand?.addListener(guard("command", onCommand));
       api.alarms.onAlarm.addListener(guard("alarm", onAlarm));
       ctx.router.install();
       watcher.register();

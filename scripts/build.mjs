@@ -29,7 +29,7 @@ import { createZip, listZip } from "./lib/zip.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
-const SHIP = ["src", "icons", "LICENSE"];
+const SHIP = ["src", "icons", "_locales", "LICENSE"];
 export const GECKO_ID = "openroute@openroute.app";
 
 const base = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
@@ -70,7 +70,7 @@ export const TARGETS = {
     zip: false,
     manifest: (m) => {
       m.host_permissions = [...new Set([...(m.host_permissions || []), "http://127.0.0.1/*", "http://localhost/*", "https://127.0.0.1/*"])];
-      m.name = `${m.name} (test build)`;
+      m.name = "OpenRoute (test build)"; // literal: some browsers substitute __MSG_ only as a whole value
       return m;
     }
   }
@@ -111,6 +111,16 @@ function verify(stage, manifest) {
   }
   const missing = [...refs].filter((r) => !existsSync(join(stage, r)));
   if (missing.length) throw new Error(`missing files referenced by the extension:\n  ${missing.join("\n  ")}`);
+
+  // Every __MSG_key__ in the manifest must exist in the default locale.
+  const used = [...JSON.stringify(manifest).matchAll(/__MSG_(\w+)__/g)].map((m) => m[1]);
+  if (used.length) {
+    if (!manifest.default_locale) throw new Error("manifest uses __MSG_ keys but has no default_locale");
+    const file = join(stage, "_locales", manifest.default_locale, "messages.json");
+    const messages = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+    const absent = used.filter((k) => !messages[k]?.message);
+    if (absent.length) throw new Error(`manifest messages missing from _locales/${manifest.default_locale}: ${absent.join(", ")}`);
+  }
   return refs.size;
 }
 

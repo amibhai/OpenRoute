@@ -26,13 +26,40 @@ export function setChildren(node, ...children) {
   node.replaceChildren(...children.flat(Infinity).filter((c) => c != null && c !== false));
 }
 
-export function relTime(ts, now = Date.now()) {
+// "in 5 minutes" / "3 hours ago", in the language the page is shown in.
+export function relTime(ts, lang, now = Date.now()) {
   if (!ts) return "";
   const s = Math.round((ts - now) / 1000);
   const abs = Math.abs(s);
-  const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const fmt = new Intl.RelativeTimeFormat(lang || undefined, { numeric: "auto" });
   if (abs < 60) return fmt.format(s, "second");
   if (abs < 3600) return fmt.format(Math.round(s / 60), "minute");
   if (abs < 86400) return fmt.format(Math.round(s / 3600), "hour");
   return fmt.format(Math.round(s / 86400), "day");
+}
+
+// Runs an async action from a button: disables it and shows a busy label
+// while it runs, so a slow companion call can't be fired twice.
+export async function busy(button, busyText, fn) {
+  const old = button.textContent;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  if (busyText) button.textContent = busyText;
+  try {
+    return await fn();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = old;
+  }
+}
+
+// Saves a JSON object as a file (no downloads permission needed).
+export function downloadJson(name, data) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  const a = el("a", { href: url, download: name, hidden: true });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

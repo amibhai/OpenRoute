@@ -3,7 +3,12 @@
 
 import { RESOLVERS } from "./dns/doh.js";
 import { secureDnsGuide } from "./platform.js";
-import { normalizeHost, isValidHostname } from "../shared/hosts.js";
+import { isRouted } from "./policy.js";
+import { presets } from "./transports/registry.js";
+import { registrableDomain } from "./domains/psl.js";
+import { normalizeHost, isValidHostname, hostFromUrl, isLocalHost, lookupDomain } from "../shared/hosts.js";
+
+export const BACKUP_FORMAT = "openroute-backup";
 
 const SETTINGS_SCHEMA = {
   detectionEnabled: (v) => typeof v === "boolean",
@@ -36,7 +41,45 @@ function domainArg(v) {
   return d;
 }
 
-export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagnoseHost }) {
+// The sites list, grouped the way routing works: one group per policy domain
+// (registrable domain by default), holding the hosts seen under it and the
+// bundle / subresource domains that ride along with it.
+export function groupSites(policies = {}, sites = {}) {
+  const groups = new Map();
+  const ensure = (domain) => {
+    if (!groups.has(domain)) groups.set(domain, { domain, policy: policies[domain] || null, hosts: [], members: [], lastActivity: 0 });
+    return groups.get(domain);
+  };
+  const ownerOf = (domain) => {
+    const p = policies[domain];
+    return p && (p.via === "bundle" || p.via === "subresource") && p.parent && policies[p.parent] ? p.parent : domain;
+  };
+  for (const [domain, p] of Object.entries(policies)) {
+    const owner = ownerOf(domain);
+    const g = ensure(owner);
+    if (owner !== domain) g.members.push(domain);
+    g.lastActivity = Math.max(g.lastActivity, p.updatedAt || 0);
+  }
+  for (const [host, site] of Object.entries(sites)) {
+    const d = lookupDomain(host, policies);
+    const g = ensure(d ? ownerOf(d) : registrableDomain(host) || host);
+    g.hosts.push(host);
+    g.lastActivity = Math.max(g.lastActivity, site.lastSeen || 0);
+  }
+  return [...groups.values()].sort((a, b) => b.lastActivity - a.lastActivity || a.domain.localeCompare(b.domain));
+}
+
+// Stable stand-ins for domains in a shareable report.
+function aliaser(on) {
+  const seen = new Map();
+  return (d) => {
+    if (!on || !d) return d;
+    if (!seen.has(d)) seen.set(d, `site-${seen.size + 1}`);
+    return seen.get(d);
+  };
+}
+
+export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagnoseHost, policyDomainFor, toggleSite, neverRouteSite, openDashboard }) {
   const { api, store, caps, transports, router, ladder, companion, settings, log } = ctx;
 
   async function upsertCompanionTransport(id, label, port, note) {
@@ -45,7 +88,7 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
     await ladder.retryDue({ force: true });
   }
 
-  return {
+  const h = {
     async getState() {
       const [s, policies, sites, list, activeTransportId, available, eventLog, access, rules] = await Promise.all([
         settings.get(), store.get("policies", {}), store.get("sites", {}), transports.list(),
@@ -56,11 +99,64 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
       const browser = getBrowser();
       return {
         schemaVersion: await store.get("schemaVersion", 0),
-        settings: s, policies, sites, transports: list, activeTransportId, rules,
+        version: api.runtime.getManifest?.().version,
+        settings: s, policies, sites, groups: groupSites(policies, sites), transports: list, activeTransportId, rules,
         companion: { available, supported: caps.nativeMessaging },
         router: router.status(), capabilities: caps, browser, access,
-        secureDns: secureDnsGuide(browser), eventLog
+        secureDns: secureDnsGuide(browser), resolvers: Object.keys(RESOLVERS), eventLog
       };
+    },
+
+    // Everything the popup's "this site" card needs about one tab: by its URL,
+    // or — where the page can't see it (Firefox for Android shows the popup
+    // as a tab of its own) — by the site this tab was last seen on.
+    async tabState({ url, tabId }) {
+      let u = String(url || "");
+      if (!/^https?:/i.test(u) && Number.isInteger(tabId)) {
+        const known = (await ctx.session.get("tabHosts", {}))[tabId];
+        if (known) u = `https://${known}/`;
+      }
+      const host = /^https?:/i.test(u) ? hostFromUrl(u) : null;
+      if (!host || isLocalHost(host)) return { web: false };
+      const [policy, sites, rules, list] = await Promise.all([
+        ladder.policyFor(host), store.get("sites", {}), store.get("rules", {}), transports.list()
+      ]);
+      const ruleFor = (name) => (rules[name] || []).find((d) => lookupDomain(host, { [d]: true })) || null;
+      const never = ruleFor("never");
+      const always = ruleFor("always");
+      return {
+        web: true, host, url: u,
+        domain: policy?.domain || (await policyDomainFor(host)),
+        policy, routed: isRouted(policy),
+        site: sites[host] || null,
+        rule: never ? "never" : always ? "always" : null,
+        ruleDomain: never || always || null,
+        transport: policy?.proxyId ? list.find((t) => t.id === policy.proxyId) || null : null
+      };
+    },
+
+    // Route a domain now: through the given transport, or the best one.
+    async routeSite({ domain, proxyId }) {
+      const d = domainArg(domain);
+      const t = proxyId ? await transports.get(String(proxyId)) : await transports.pickBest();
+      if (!t) throw new Error("no transport to route through; add one first");
+      const policy = await ladder.setRung(d, "proxy", t.id);
+      await updateBadge();
+      return { policy };
+    },
+
+    async toggleSite({ url, tabId }) {
+      return { result: await toggleSite(String(url || ""), Number.isInteger(tabId) ? tabId : null) };
+    },
+
+    async neverRouteSite({ url, tabId }) {
+      return { result: await neverRouteSite(String(url || ""), Number.isInteger(tabId) ? tabId : null) };
+    },
+
+    async openDashboard({ section } = {}) {
+      const s = String(section || "");
+      await openDashboard(/^[a-z]{0,20}$/.test(s) ? s : "");
+      return {};
     },
 
     async recheck({ host }) {
@@ -252,6 +348,123 @@ export function createHandlers(ctx, { updateBadge, getBrowser, getAccess, diagno
     async companionStatus() {
       try { return { status: await companion.send({ cmd: "status" }) }; }
       catch (e) { return { status: { ok: false, error: String(e?.message || e) } }; }
+    },
+
+    // ---- backup, reset, diagnostics ------------------------------------------
+
+    // Settings, rules and your own transports. Proxy passwords only on request.
+    async exportData({ includeSecrets = false } = {}) {
+      const [s, rules, configs, activeTransportId] = await Promise.all([
+        settings.get(), store.get("rules", {}), transports.configs(), transports.getActiveId()
+      ]);
+      const own = configs.filter((t) => t.kind !== "companion").map((t) => {
+        const { auth, ...rest } = t;
+        if (!auth) return rest;
+        return { ...rest, auth: includeSecrets ? { ...auth } : { username: auth.username } };
+      });
+      return {
+        data: {
+          format: BACKUP_FORMAT, version: 1, exportedAt: new Date().toISOString(),
+          app: api.runtime.getManifest?.().version, settings: s, rules, transports: own, activeTransportId
+        }
+      };
+    },
+
+    // Validates everything as if typed in; what doesn't fit is skipped and
+    // reported, never half-applied.
+    async importData({ data }) {
+      if (!data || data.format !== BACKUP_FORMAT || data.version !== 1) throw new Error("that file isn't an OpenRoute backup");
+      const report = { settings: 0, rules: 0, transports: 0, skipped: [], needsPassword: [] };
+      const patch = {};
+      for (const [k, v] of Object.entries(data.settings || {})) {
+        if (SETTINGS_SCHEMA[k]?.(v)) {
+          patch[k] = v;
+          report.settings++;
+        } else {
+          report.skipped.push(`setting ${k}`);
+        }
+      }
+      if (Object.keys(patch).length) await h.saveSettings({ patch });
+      for (const list of ["always", "never"]) {
+        for (const domain of Array.isArray(data.rules?.[list]) ? data.rules[list] : []) {
+          try {
+            await h.setRule({ domain, list });
+            report.rules++;
+          } catch {
+            report.skipped.push(`rule ${String(domain).slice(0, 80)}`);
+          }
+        }
+      }
+      for (const t of Array.isArray(data.transports) ? data.transports : []) {
+        if (!t || t.kind === "companion") continue;
+        try {
+          await transports.upsert(t);
+          report.transports++;
+          if (t.auth?.username && t.auth.password === undefined) report.needsPassword.push(String(t.label || t.id).slice(0, 60));
+        } catch (e) {
+          report.skipped.push(`transport ${String(t.label || t.id || "?").slice(0, 60)}: ${e.message}`);
+        }
+      }
+      if (data.activeTransportId && (await transports.get(String(data.activeTransportId)))) await transports.setActiveId(String(data.activeTransportId));
+      await router.apply();
+      await ladder.retryDue({ force: true });
+      return { report };
+    },
+
+    // Back to a fresh install: no sites, rules, settings or own transports.
+    // The companion's transports stay (it still runs them) and so do the
+    // presets.
+    async resetAll() {
+      await ladder.clearAll();
+      await store.tx(["settings", "rules", "eventLog", "transports", "activeTransportId"], (d) => {
+        const kept = (Array.isArray(d.transports) ? d.transports : []).filter((t) => t.kind === "companion");
+        d.settings = undefined;
+        d.rules = undefined;
+        d.eventLog = undefined;
+        d.activeTransportId = undefined;
+        d.transports = kept.length ? [...presets(), ...kept] : undefined;
+      });
+      await router.apply();
+      await ctx.applyWebRtc?.().catch(() => {});
+      await updateBadge();
+      return {};
+    },
+
+    // A report to attach to a bug: what OpenRoute saw and decided. Domains
+    // are replaced by stand-ins unless asked otherwise; proxy addresses and
+    // credentials never appear.
+    async diagnosticsReport({ redactDomains = true } = {}) {
+      const st = await h.getState();
+      const alias = aliaser(redactDomains !== false);
+      const policies = Object.fromEntries(Object.values(st.policies).map((p) => [alias(p.domain), {
+        status: p.status, rung: p.rung, pinned: !!p.pinned, via: p.via || null, parent: alias(p.parent) || null,
+        attempts: p.attempts || 0, exhaustedReason: p.exhaustedReason || null, transport: p.proxyId ? "(set)" : null
+      }]));
+      const sites = Object.fromEntries(Object.values(st.sites).map((s) => [alias(s.host), {
+        type: s.type, errorCode: s.errorCode, errorKind: s.errorKind, count: s.count,
+        dohUnreachable: !!s.dohUnreachable, injected: !!s.injected, localInjected: !!s.localInjected, echLikely: !!s.echLikely
+      }]));
+      const events = (await log.list(300)).map((e) => {
+        const out = { ...e };
+        for (const k of ["domain", "parent"]) if (out[k]) out[k] = alias(out[k]);
+        if (out.host) out.host = alias(out.host);
+        if (out.url) out.url = alias(hostFromUrl(out.url) || "url");
+        if (out.proxy) out.proxy = "(proxy)";
+        return out;
+      });
+      return {
+        report: {
+          generatedAt: new Date().toISOString(), version: st.version, browser: st.browser, capabilities: st.capabilities,
+          router: st.router, access: st.access,
+          settings: { ...st.settings, customDoH: st.settings.customDoH ? "(set)" : null },
+          transports: st.transports.map((t) => ({
+            kind: t.kind, scheme: t.scheme, local: t.host === "127.0.0.1" || t.host === "localhost", port: t.host === "127.0.0.1" ? t.port : undefined,
+            health: t.health, latencyMs: t.latencyMs, failures: t.failures, successes: t.successes, auth: !!t.auth
+          })),
+          companion: st.companion, policies, sites, events, redactedDomains: redactDomains !== false
+        }
+      };
     }
   };
+  return h;
 }

@@ -3,103 +3,94 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Welcome to OpenRoute</title>
+  <title data-i18n="welcomeTitle"></title>
+  <link rel="stylesheet" href="shared/base.css" />
   <link rel="stylesheet" href="onboarding.css" />
 </head>
-<body>
+<body class="onboarding">
   <main class="wrap">
     <header class="hero">
       <img src="../../icons/icon128.png" alt="" width="56" height="56" />
       <div>
-        <h1>OpenRoute</h1>
-        <p class="sub">Detect what's blocking a site — then route only that site around it, at full speed.</p>
+        <h1 data-i18n="extShortName"></h1>
+        <p class="sub" data-i18n="welcomeSub"></p>
       </div>
     </header>
 
     <!-- Shown only when something still needs the user's OK (e.g. on Firefox). -->
-    <section id="accessCard" class="card" hidden aria-labelledby="accessTitle">
-      <div class="step">
-        <span class="num" aria-hidden="true">✓</span>
-        <div>
-          <h2 id="accessTitle">A few permissions</h2>
-          <p>Your browser asks you before an extension can do these. OpenRoute never reads page content.</p>
-          <ul class="checklist">
-            <li id="rowHost" hidden>
-              <span class="state" aria-hidden="true"></span>
-              <div><b>Access to all sites</b> — needed to route the blocked ones through a proxy.</div>
-              <button id="grantHost" class="btn small" type="button">Allow</button>
-            </li>
-            <li id="rowConsent" hidden>
-              <span class="state" aria-hidden="true"></span>
-              <div><b>Encrypted-DNS check</b> (optional) — when a site fails, its domain is checked against
-                your DoH provider to tell DNS tampering from other blocks. Routing works without it.</div>
-              <button id="grantConsent" class="btn small" type="button">Allow</button>
-            </li>
-            <li id="rowPrivate" hidden>
-              <span class="state" aria-hidden="true"></span>
-              <div><b>Private windows</b> (optional) — to route there too, open
-                <code>about:addons</code> → OpenRoute → <i>Run in Private Windows</i> → Allow.</div>
-            </li>
-          </ul>
-        </div>
+    <section id="accessCard" class="card step" hidden aria-labelledby="accessTitle">
+      <span class="num" aria-hidden="true">✓</span>
+      <div class="stack">
+        <h2 id="accessTitle" data-i18n="onbPermsTitle"></h2>
+        <p data-i18n="onbPermsHelp"></p>
+        <ul class="checklist">
+          <li id="rowHost" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbHostTitle"></b> <span data-i18n="onbHostHelp"></span></div>
+            <button id="grantHost" class="btn small" type="button" data-i18n="allow"></button>
+          </li>
+          <li id="rowConsent" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbConsentTitle"></b> <span data-i18n="onbConsentHelp"></span></div>
+            <button id="grantConsent" class="btn small" type="button" data-i18n="allow"></button>
+          </li>
+          <li id="rowPrivate" hidden>
+            <span class="state" aria-hidden="true"></span>
+            <div><b data-i18n="onbPrivateTitle"></b> <span data-i18n="onbPrivateHelp"></span></div>
+          </li>
+        </ul>
       </div>
     </section>
 
-    <section class="card">
-      <div class="step">
-        <span class="num">1</span>
-        <div>
-          <h2>Turn on Secure DNS</h2>
-          <p>The #1 cause of blocking is DNS tampering, and this is the zero-latency fix.
-             It takes one toggle in <span id="browserName">your browser</span> and OpenRoute will confirm it worked.</p>
-          <button id="openDns" class="btn primary" type="button">Open Secure DNS settings</button>
-          <ol id="dnsSteps" class="hint" hidden></ol>
-        </div>
+    <section class="card step" aria-labelledby="step1Title">
+      <span class="num" aria-hidden="true">1</span>
+      <div class="stack">
+        <h2 id="step1Title" data-i18n="onbStep1Title"></h2>
+        <p id="step1Text"></p>
+        <div><button id="openDns" class="btn primary" type="button" data-i18n="openSecureDns"></button></div>
+        <ol id="dnsSteps" class="hint" hidden></ol>
       </div>
     </section>
 
-    <section class="card">
-      <div class="step">
-        <span class="num">2</span>
-        <div>
-          <h2>Browse normally</h2>
-          <p>When a site fails to load, OpenRoute diagnoses <em>how</em> it's blocked and walks it
-             down a failover ladder automatically:</p>
-          <ul class="ladder">
-            <li><b>Secure DNS</b> — beats DNS tampering at full speed</li>
-            <li><b>ECH</b> — beats SNI/DPI filtering where the site supports it</li>
-            <li><b>Proxy / pool</b> — routes IP-blocked domains through a transport you add</li>
-            <li><b>Tor</b> — the free fallback when even a proxy IP is blocked</li>
-            <li><b>Read-only</b> — Wayback / reader view so you can still read the page</li>
-          </ul>
-          <p class="hint">Only blocked domains detour — everything else stays direct and full-speed.</p>
-        </div>
+    <section class="card step" aria-labelledby="step2Title">
+      <span class="num" aria-hidden="true">2</span>
+      <div class="stack">
+        <h2 id="step2Title" data-i18n="onbStep2Title"></h2>
+        <p data-i18n="onbStep2Text"></p>
+        <ul class="ladder">
+          <li><b data-i18n="rungDoh"></b> <span data-i18n="onbLadderDns"></span></li>
+          <li><b data-i18n="rungEch"></b> <span data-i18n="onbLadderEch"></span></li>
+          <li><b data-i18n="onbLadderDpiName"></b> <span data-i18n="onbLadderDpi"></span></li>
+          <li><b data-i18n="onbLadderProxyName"></b> <span data-i18n="onbLadderProxy"></span></li>
+          <li><b data-i18n="onbLadderTorName"></b> <span data-i18n="onbLadderTor"></span></li>
+          <li><b data-i18n="rungFallback"></b> <span data-i18n="onbLadderReadOnly"></span></li>
+        </ul>
+        <p class="hint" data-i18n="onbOnlyBlocked"></p>
       </div>
     </section>
 
-    <section class="card">
-      <div class="step">
-        <span class="num">3</span>
-        <div>
-          <h2>Want to beat IP blocks &amp; DPI? Add a transport</h2>
-          <p>For sites blocked at the IP level, OpenRoute needs somewhere unblocked to route through.
-             Point it at a proxy or Tor you already run, or install the <b>companion</b> for built-in
-             Shadowsocks-2022 / VLESS-Reality / Tor and a one-command self-host server.</p>
-          <p id="companionLine" class="hint">Checking for the companion…</p>
+    <section class="card step" aria-labelledby="step3Title">
+      <span class="num" aria-hidden="true">3</span>
+      <div class="stack">
+        <h2 id="step3Title" data-i18n="onbStep3Title"></h2>
+        <p data-i18n="onbStep3Text"></p>
+        <div class="actions">
+          <button id="discover" class="btn" type="button" data-i18n="findLocalProxies"></button>
+          <button id="openTransports" class="btn" type="button" data-i18n="openDashboardTransports"></button>
         </div>
+        <p id="discoverResult" class="note" role="status" aria-live="polite"></p>
+        <p id="companionLine" class="hint"></p>
       </div>
     </section>
 
-    <section class="reality">
-      <h3>An honest word</h3>
-      <p>No tool is truly unblockable — OpenRoute stacks independent fallback layers so that, in
-         practice, you almost always get through. It's censorship circumvention, <b>not anonymity</b>:
-         for anonymity use Tor Browser. Know your local laws before circumventing restrictions.</p>
+    <section class="reality" aria-labelledby="honestTitle">
+      <h2 id="honestTitle" data-i18n="onbHonestTitle"></h2>
+      <p data-i18n="onbHonestText"></p>
     </section>
 
-    <footer class="actions">
-      <button id="done" class="btn primary" type="button">Start browsing</button>
-      <span class="muted">You can reopen this from the extension's details page.</span>
+    <footer class="actions end">
+      <button id="done" class="btn primary" type="button" data-i18n="onbDone"></button>
+      <span class="muted small" data-i18n="onbReopen"></span>
     </footer>
   </main>
   <script type="module" src="onboarding.js"></script>

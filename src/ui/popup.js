@@ -1,304 +1,271 @@
-// OpenRoute popup. Reads all state from the background (getState) and drives
-// it through typed messages. All dynamic content is inserted as text.
+// OpenRoute popup: what's happening on this tab, the routing mode, the
+// transports' health and the latest sites. Everything else is on the
+// dashboard (options page). All dynamic content is inserted as text.
 
-import { $, el, setChildren, relTime } from "./shared/dom.js";
+import { $, $$, el, setChildren, relTime, busy } from "./shared/dom.js";
 import { send, getApi } from "./shared/messaging.js";
-import { BADGES, REMEDIATION, STATUS, EXHAUSTED_REASON, RUNG_LABEL, HEALTH_CLS, RESOLVER_LABELS } from "./labels.js";
+import { t, localize, locale } from "./shared/i18n.js";
+import { STATUS, STATUS_SEEN, EXHAUSTED, RUNG, HEALTH, DNS_TYPES, typeOf } from "./labels.js";
 
 const api = getApi();
-let STATE = { policies: {}, transports: [], settings: {}, activeTransportId: null, companion: {}, sites: {} };
+let STATE = null;
+let TAB = null;
+let INFO = null;
 
-function banner(text, cls = "warn", action = null) {
+const chip = (tone, text) => el("span", { class: `chip ${tone}`, text });
+const button = (text, onclick, cls = "btn small") => el("button", { class: cls, type: "button", text, onclick });
+
+function banner(text, tone = "warn", action = null) {
   const b = $("#banner");
-  if (!text) { b.hidden = true; return; }
-  b.className = `banner ${cls}`;
-  setChildren(b, el("span", { text }), action && el("button", {
-    class: "btn tiny", type: "button", text: action.label, onclick: action.onClick
-  }));
+  if (!text) {
+    b.hidden = true;
+    return;
+  }
+  b.className = `banner ${tone}`;
+  setChildren(b, el("span", { text }), action && button(action.label, action.onClick, "btn small"));
   b.hidden = false;
 }
 
-// permissions.request must run inside the click handler (a user gesture).
-async function requestPermissions(perms) {
-  try {
-    await api.permissions.request(perms);
-  } catch (e) {
-    banner(`The browser refused: ${e?.message || e}`, "bad");
-  }
-  refresh();
+function note(text, tone = "") {
+  const n = $("#tabNote");
+  n.textContent = text || "";
+  n.className = `note small ${tone}`;
+}
+
+// The page the user is looking at. Firefox for Android shows the popup as a
+// tab of its own; then it's the page they came from.
+async function currentTab() {
+  const tabs = await api.tabs.query({ currentWindow: true }).catch(() => []);
+  const own = api.runtime.getURL("");
+  const active = tabs.find((x) => x.active);
+  if (active && !(active.url || "").startsWith(own)) return active;
+  return tabs.filter((x) => !x.active).sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0] || active || null;
 }
 
 async function refresh() {
-  const res = await send("getState");
-  if (!res?.ok) {
-    banner(`Can't reach the OpenRoute background: ${res?.error || "unknown error"}`, "bad");
+  const [state, tab] = await Promise.all([send("getState"), currentTab()]);
+  if (!state?.ok) {
+    banner(t("errorBackground", { error: state?.error || "" }), "bad");
     return;
   }
-  STATE = res;
-  renderAll();
+  STATE = state;
+  TAB = tab;
+  INFO = tab ? await send("tabState", { url: tab.url, tabId: tab.id }) : { ok: true, web: false };
+  render();
 }
 
-async function act(type, extra, { quiet = false } = {}) {
+async function act(type, extra) {
   const res = await send(type, extra);
-  if (!res?.ok && !quiet) banner(res?.error || "Something went wrong", "bad");
+  if (!res?.ok) banner(res?.error || t("errorGeneric"), "bad");
   await refresh();
   return res;
 }
 
-// ---- transports -------------------------------------------------------------
-
-function endpointOf(t) {
-  return t.kind === "companion" ? `companion · 127.0.0.1:${t.port}` : `${t.scheme}://${t.host}:${t.port}`;
+function openDashboard(section) {
+  send("openDashboard", { section }).finally(() => window.close());
 }
+
+const transportName = (id) => STATE.transports.find((x) => x.id === id)?.label || id;
+const latency = (tr) => (tr?.latencyMs ? t("latencyMs", { ms: Math.round(tr.latencyMs) }) : "");
+
+// ---- this site --------------------------------------------------------------
+
+async function toggleSite(btn) {
+  const res = await busy(btn, t("working"), () => send("toggleSite", { url: TAB?.url || INFO?.url, tabId: TAB?.id }));
+  if (!res?.ok) return note(res?.error || t("errorGeneric"), "bad");
+  const r = res.result || {};
+  if (r.reason === "no-transport") return window.close(); // the dashboard opened on Transports
+  await refresh();
+  if (r.done) note(r.routed ? t("noteRouted", { domain: r.domain }) : t("noteUnrouted", { domain: r.domain }), "good");
+}
+
+async function openSecureDns(btn) {
+  const res = await busy(btn, null, () => send("openSecureDnsSettings"));
+  if (res?.opened) return window.close();
+  const g = res?.guide;
+  if (g) note([g.copyUrl && t("openUrl", { url: g.copyUrl }), ...(g.steps || [])].filter(Boolean).join(" → "));
+}
+
+function renderTab() {
+  const status = $("#tabStatus");
+  const detail = $("#tabDetail");
+  const actions = $("#tabActions");
+  if (!INFO?.ok || !INFO.web) {
+    $("#tabHost").textContent = t("tabNotWebsite");
+    setChildren(status);
+    detail.textContent = "";
+    setChildren(actions);
+    return;
+  }
+  $("#tabHost").textContent = INFO.host;
+  const s = STATE.settings || {};
+  const pol = INFO.policy;
+  const site = INFO.site;
+  const toggle = (label, primary = false) => button(label, (e) => toggleSite(e.currentTarget), `btn small${primary ? " primary" : ""}`);
+  const line = [];
+  const buttons = [];
+  let text;
+
+  if (s.mode === "off") {
+    line.push(chip("muted", t("statusOff")));
+    text = t("tabModeOff");
+    buttons.push(button(t("turnOnSmart"), () => act("saveSettings", { patch: { mode: "smart" } }), "btn small primary"));
+  } else if (INFO.rule === "never") {
+    line.push(chip("muted", t("statusNever")));
+    text = t("tabNever", { domain: INFO.ruleDomain || INFO.domain });
+    buttons.push(button(t("removeRule"), () => act("setRule", { domain: INFO.ruleDomain || INFO.domain, list: null })));
+  } else if (s.mode === "full" && !pol?.pinned) {
+    line.push(chip("good", t("statusFullTunnel")));
+    text = t("tabFullTunnel");
+  } else if (!pol) {
+    line.push(chip("muted", t("statusDirect")));
+    text = t("tabDirect");
+    buttons.push(toggle(t("routeThisSite")));
+  } else {
+    const [key, tone] = STATUS[pol.status] || STATUS.blocked;
+    line.push(chip(tone, t(key)));
+    if (pol.pinned) line.push(chip("muted", t("pinned")));
+    const via = INFO.transport?.label || (pol.proxyId ? transportName(pol.proxyId) : "");
+    switch (pol.status) {
+      case "fixed":
+        if (!INFO.routed) text = t("tabWorksOn", { rung: t(RUNG[pol.rung] || "rungDirect") });
+        else if (INFO.transport?.latencyMs) text = t("tabRoutedViaLatency", { via, latency: latency(INFO.transport) });
+        else text = t("tabRoutedVia", { via });
+        if (INFO.routed || pol.pinned) buttons.push(toggle(t("stopRouting")));
+        break;
+      case "routing":
+        text = t("tabRoutingVia", { via });
+        buttons.push(button(t("reloadPage"), () => { api.tabs.reload(TAB.id); window.close(); }, "btn small primary"), toggle(t("stopRouting")));
+        break;
+      case "exhausted":
+        text = [t(EXHAUSTED[pol.exhaustedReason] || "exhaustedAllFailed"), pol.retryAt ? t("retryingAt", { when: relTime(pol.retryAt, locale()) }) : ""].filter(Boolean).join(" ");
+        if (STATE.transports.length) buttons.push(button(t("tryAgainNow"), () => act("routeSite", { domain: pol.domain }), "btn small primary"));
+        buttons.push(button(t("addTransport"), () => openDashboard("transports")));
+        break;
+      case "manual":
+        text = t("tabManual", { rung: t(RUNG[pol.rung] || "rungDirect") });
+        buttons.push(button(t("backToAuto"), () => act("setRung", { domain: pol.domain, rung: "auto" })));
+        break;
+      default: { // blocked, needs-user
+        const dns = site?.type && DNS_TYPES.has(site.type);
+        text = site?.type ? t(typeOf(site.type)[1]) : t("tabBlocked");
+        if (dns) buttons.push(button(t("turnOnSecureDns"), (e) => openSecureDns(e.currentTarget), "btn small primary"));
+        buttons.push(toggle(t("routeThisSite"), !dns));
+      }
+    }
+  }
+  if (site?.type && pol && pol.status !== "fixed") {
+    const [label, , tone] = typeOf(site.type);
+    line.push(chip(tone, t(label)));
+  }
+  setChildren(status, line);
+  detail.textContent = text;
+  setChildren(actions, buttons);
+}
+
+// ---- transports & sites --------------------------------------------------------
 
 function renderTransports() {
-  const items = STATE.transports.map((t) => {
-    const radio = el("input", {
-      type: "radio", name: "activeT", class: "tactive", checked: t.id === STATE.activeTransportId,
-      "aria-label": `Prefer ${t.label}`,
-      onchange: () => act("setActiveTransport", { id: t.id })
-    });
-    const health = el("span", {
-      class: `thealth ${HEALTH_CLS[t.health] || "muted"}`,
-      title: `health: ${t.health}${t.latencyMs ? ` · ${t.latencyMs} ms` : ""}`,
-      role: "img", "aria-label": `health ${t.health}`
-    });
-    const meta = el("div", { class: "tmeta" },
-      el("span", { class: "tlabel", text: t.label }),
-      el("span", { class: "tendpoint muted small", text: endpointOf(t) + (t.note ? ` — ${t.note}` : "") }));
-    const remove = el("button", {
-      class: "btn tiny ghost tremove", type: "button", title: `Remove ${t.label}`, "aria-label": `Remove ${t.label}`,
-      text: "✕", onclick: () => act("removeTransport", { id: t.id })
-    });
-    return el("li", { class: "titem" }, el("label", { class: "tradio" }, radio), health, meta, remove);
-  });
-  setChildren($("#transportList"), items);
-
-  const c = STATE.companion || {};
-  const pill = $("#companionPill");
-  pill.textContent = !c.supported ? "companion: not supported here" : c.available ? "companion: connected" : "companion: not installed";
-  pill.className = "pill " + (c.available ? "good" : "muted");
-  $("#companionBox").hidden = c.supported === false;
-}
-
-// ---- sites ------------------------------------------------------------------
-
-function transportLabel(id) {
-  return STATE.transports.find((t) => t.id === id)?.label || id;
-}
-
-function rungSelect(host, pol) {
-  const value = !pol || !pol.pinned ? "auto" : pol.rung === "proxy" && pol.proxyId ? `proxy:${pol.proxyId}` : pol.rung;
-  const options = [
-    el("option", { value: "auto", text: "Auto" }),
-    el("option", { value: "direct", text: "Direct" }),
-    ...STATE.transports.map((t) => el("option", { value: `proxy:${t.id}`, text: `via ${t.label}` })),
-    el("option", { value: "fallback", text: "Read-only" })
-  ];
-  const sel = el("select", { class: "rungSelect", "aria-label": `Route for ${host}` }, options);
-  sel.value = value;
-  sel.addEventListener("change", () => {
-    const v = sel.value;
-    if (v.startsWith("proxy:")) act("setRung", { domain: host, rung: "proxy", proxyId: v.slice(6) });
-    else act("setRung", { domain: host, rung: v });
-  });
-  return el("label", { class: "rungpick small" }, "route ", sel);
-}
-
-function statusLine(pol) {
-  if (!pol) return [el("span", { class: "chip muted", text: "not routed" })];
-  const s = STATUS[pol.status] || { label: pol.status, cls: "muted" };
-  const via = pol.rung === "proxy" && pol.proxyId ? ` via ${transportLabel(pol.proxyId)}` : "";
-  const parts = [
-    el("span", { class: `chip ${s.cls}`, text: s.label + (pol.pinned ? " · pinned" : "") }),
-    el("span", { class: "muted", text: ` ${RUNG_LABEL[pol.rung] || pol.rung}${via}` })
-  ];
-  if (pol.status === "exhausted") {
-    const why = EXHAUSTED_REASON[pol.exhaustedReason] || "";
-    const when = pol.retryAt ? ` Retrying ${relTime(pol.retryAt)}.` : "";
-    parts.push(el("div", { class: "muted small", text: `${why}${when}`.trim() }));
-  } else if (pol.status === "needs-user" && EXHAUSTED_REASON[pol.exhaustedReason]) {
-    parts.push(el("div", { class: "muted small", text: EXHAUSTED_REASON[pol.exhaustedReason] }));
-  }
-  return parts;
-}
-
-function renderSites() {
-  const sites = STATE.sites || {};
-  const policies = STATE.policies || {};
-  const hosts = [...new Set([...Object.keys(sites), ...Object.keys(policies)])];
-  const rows = hosts.map((h) => ({ host: h, diag: sites[h] || {}, pol: policies[h] || null }))
-    .sort((a, b) => (b.diag.lastSeen || b.pol?.updatedAt || 0) - (a.diag.lastSeen || a.pol?.updatedAt || 0));
-
-  $("#count").textContent = String(rows.length);
-  $("#empty").hidden = rows.length > 0;
-
-  setChildren($("#list"), rows.map(({ host, diag, pol }) => {
-    const url = diag.url || `https://${host}/`;
-    const badge = BADGES[diag.type] || (diag.type ? BADGES.unknown : null);
-    const bits = [];
-    if (diag.echLikely) bits.push("ECH available");
-    else if (diag.hasHTTPS) bits.push("HTTPS record");
-    if (diag.injected) bits.push("⚠ injected answer");
-    if (diag.localInjected) bits.push(`⚠ your resolver answered ${(diag.localIPs || []).join(", ")}`);
-    if (diag.dohUnreachable) bits.push("encrypted DNS unreachable");
-    if (diag.dohSkipped === "consent") bits.push("encrypted-DNS check off");
-    if (diag.dohProvider) bits.push(`via ${RESOLVER_LABELS[diag.dohProvider] || diag.dohProvider}`);
-
-    const actions = el("div", { class: "actions" },
-      rungSelect(host, pol),
-      el("button", { class: "btn small", type: "button", text: "Retry", onclick: () => api.tabs.create({ url }) }),
-      el("button", {
-        class: "btn small", type: "button", text: "Recheck",
-        onclick: async (e) => {
-          const b = e.currentTarget; const old = b.textContent;
-          b.textContent = "…"; b.disabled = true;
-          await act("recheck", { host });
-          b.textContent = old; b.disabled = false;
-        }
-      }),
-      el("button", { class: "btn small", type: "button", text: "Wayback", onclick: () => api.tabs.create({ url: "https://web.archive.org/web/2/" + url }) }),
-      el("button", { class: "btn small", type: "button", text: "Reader", onclick: () => api.tabs.create({ url: "https://r.jina.ai/" + url }) }),
-      el("button", { class: "btn small ghost", type: "button", text: "Remove", onclick: () => act("clearDomain", { domain: host }) }));
-
-    return el("li", { class: "item" },
-      el("div", { class: "item-top" },
-        el("span", { class: "host", text: host }),
-        badge && el("span", { class: `badge ${badge.cls}`, text: badge.label })),
-      el("div", { class: "statusline small" }, statusLine(pol)),
-      diag.type && el("p", { class: "remedy muted small", text: REMEDIATION[diag.type] || REMEDIATION.unknown }),
-      bits.length && el("div", { class: "diag muted small", text: bits.join(" · ") }),
-      diag.resolvedIPs?.length && el("div", { class: "ips muted small", text: `Real IP via DoH: ${diag.resolvedIPs.join(", ")}` }),
-      actions);
+  const list = STATE.transports || [];
+  $("#transportEmpty").hidden = list.length > 0;
+  setChildren($("#transportList"), list.slice(0, 5).map((tr) => {
+    const [hk, tone] = HEALTH[tr.health] || HEALTH.unknown;
+    return el("li", {},
+      el("span", { class: `dot ${tone}`, role: "img", "aria-label": t(hk) }),
+      el("span", { class: "tl", text: tr.label, title: tr.label }),
+      tr.id === STATE.activeTransportId && chip("muted", t("preferred")),
+      el("span", { class: "tm", text: tr.health === "up" && tr.latencyMs ? latency(tr) : t(hk) }));
   }));
 }
 
-// ---- controls ---------------------------------------------------------------
+function renderSites() {
+  const groups = (STATE.groups || []).filter((g) => g.policy || g.hosts.length);
+  $("#siteCount").textContent = groups.length ? String(groups.length) : "";
+  $("#sitesEmpty").hidden = groups.length > 0;
+  setChildren($("#siteList"), groups.slice(0, 5).map((g) => {
+    const [key, tone] = g.policy ? STATUS[g.policy.status] || STATUS.blocked : STATUS_SEEN;
+    const via = g.policy?.proxyId ? transportName(g.policy.proxyId) : "";
+    return el("li", {}, el("button", {
+      type: "button", onclick: () => openDashboard("sites"),
+      "aria-label": t("siteRowLabel", { domain: g.domain, status: t(key) })
+    },
+    el("span", { class: "sd", text: g.domain }),
+    via && el("span", { class: "sv", text: via }),
+    chip(tone, t(key))));
+  }));
+}
 
-function renderControls() {
-  const s = STATE.settings || {};
-  $("#autoRoute").checked = s.autoRoute !== false;
-  $("#autoReload").checked = s.autoReload !== false;
-  $("#detectionToggle").checked = s.detectionEnabled !== false;
-  $("#providerSelect").value = s.dohProvider || "cloudflare";
-  $("#remoteDiagnosis").checked = s.remoteDiagnosis !== false;
+// permissions.request has to run inside the click (a user gesture).
+async function requestPermissions(perms) {
+  try {
+    await api.permissions.request(perms);
+  } catch (e) {
+    banner(t("errorPermission", { error: e?.message || String(e) }), "bad");
+  }
+  refresh();
+}
 
+function renderBanner() {
   const access = STATE.access || {};
   const caps = STATE.capabilities || {};
-  $("#consentNote").hidden = !(access.dataConsent === false && s.remoteDiagnosis !== false);
-
   const r = STATE.router || {};
   if (caps.needsHostAccessToRoute && access.hostAccess === false) {
-    banner("OpenRoute needs access to all sites to route the blocked ones (it never reads page content).", "bad", {
-      label: "Allow",
-      onClick: () => requestPermissions({ origins: ["<all_urls>"] })
-    });
+    banner(t("bannerNeedsHostAccess"), "bad", { label: t("allow"), onClick: () => requestPermissions({ origins: ["<all_urls>"] }) });
   } else if (r.level === "controlled_by_other_extensions") {
-    banner("Another extension controls your proxy settings, so OpenRoute can't route sites. Disable the other proxy/VPN extension.", "bad");
+    banner(t("bannerOtherExtension"), "bad");
   } else if (r.engine === "none") {
-    banner("This browser has no proxy API: OpenRoute can diagnose blocks and suggest fixes, but can't route sites.", "warn");
+    banner(t("bannerNoProxyApi"), "warn");
   } else if (r.level === "not_controllable") {
-    banner("Your proxy settings are locked by a policy on this device, so OpenRoute can't route sites.", "bad");
+    banner(t("bannerPolicyLocked"), "bad");
   } else if (r.error) {
-    banner(`Routing error: ${r.error}`, "bad");
+    banner(t("bannerRoutingError", { error: r.error }), "bad");
   } else {
     banner("");
   }
 }
 
-function renderAll() {
+function render() {
+  const mode = STATE.settings?.mode || "smart";
+  for (const r of $$('input[name="mode"]')) r.checked = r.value === mode;
+  renderBanner();
+  renderTab();
   renderTransports();
   renderSites();
-  renderControls();
 }
 
-function initControls() {
-  const save = (patch) => act("saveSettings", { patch });
-  $("#autoRoute").addEventListener("change", (e) => save({ autoRoute: e.target.checked }));
-  $("#autoReload").addEventListener("change", (e) => save({ autoReload: e.target.checked }));
-  $("#detectionToggle").addEventListener("change", (e) => save({ detectionEnabled: e.target.checked }));
-  $("#providerSelect").addEventListener("change", (e) => save({ dohProvider: e.target.value }));
-  $("#remoteDiagnosis").addEventListener("change", (e) => save({ remoteDiagnosis: e.target.checked }));
-  $("#grantConsent").addEventListener("click", () => requestPermissions({ data_collection: ["browsingActivity"] }));
-  $("#clearAll").addEventListener("click", () => act("clearAll"));
-
-  $("#openDns").addEventListener("click", async () => {
-    const res = await send("openSecureDnsSettings");
-    const guide = res?.guide;
-    const steps = $("#dnsSteps");
-    if (res?.opened || !guide) { steps.hidden = true; return; }
-    setChildren(steps, (guide.copyUrl ? [`Open ${guide.copyUrl}`] : []).concat(guide.steps || []).map((s) => el("li", { text: s })));
-    steps.hidden = false;
-  });
-
-  $("#addTransportForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const err = $("#tError");
-    err.hidden = true;
-    const transport = {
-      label: $("#tLabel").value.trim(),
-      scheme: $("#tScheme").value,
-      host: $("#tHost").value.trim(),
-      port: Number.parseInt($("#tPort").value.trim(), 10),
-      kind: "user"
-    };
-    const res = await send("addTransport", { transport });
-    if (!res?.ok) {
-      err.textContent = res?.error || "Couldn't add that transport";
-      err.hidden = false;
-      return;
-    }
-    $("#tLabel").value = $("#tHost").value = $("#tPort").value = "";
-    refresh();
-  });
-
-  $("#cConnect").addEventListener("click", async () => {
-    const links = $("#cLink").value.split("\n").map((s) => s.trim()).filter(Boolean);
-    const label = $("#cLabel").value.trim();
-    const status = $("#cStatus");
-    if (!links.length) { $("#cLink").focus(); return; }
-    const btn = $("#cConnect"); const old = btn.textContent;
-    btn.textContent = "Connecting…"; btn.disabled = true; status.textContent = "";
-    const res = await send("companionConnect", { links, label });
-    btn.textContent = old; btn.disabled = false;
-    const inner = res?.result;
-    if (inner?.ok) {
-      const pool = inner.count > 1 ? ` · pool of ${inner.count}` : "";
-      status.textContent = `Connected · SOCKS 127.0.0.1:${inner.socksPort}${pool}`;
-      $("#cLink").value = "";
+function init() {
+  localize();
+  for (const r of $$('input[name="mode"]')) {
+    r.addEventListener("change", (e) => {
+      if (e.target.checked) act("saveSettings", { patch: { mode: e.target.value } });
+    });
+  }
+  $("#openOptions").addEventListener("click", () => openDashboard(""));
+  $("#manageTransports").addEventListener("click", () => openDashboard("transports"));
+  $("#manageSites").addEventListener("click", () => openDashboard("sites"));
+  $("#discover").addEventListener("click", async (e) => {
+    const out = $("#discoverResult");
+    const res = await busy(e.currentTarget, t("searching"), () => send("discoverLocalProxies"));
+    if (!res?.ok || res.error) {
+      out.textContent = res?.error || t("errorGeneric");
+      out.className = "note small bad";
+    } else if (res.found?.length) {
+      out.textContent = t("discoverFound", { list: res.found.map((f) => `${f.label} (${f.port})`).join(", ") });
+      out.className = "note small good";
     } else {
-      status.textContent = "Failed: " + (inner?.error || res?.error || "companion not installed");
+      out.textContent = t("discoverNone", { count: res.tested });
+      out.className = "note small";
     }
-    refresh();
+    await refresh();
   });
 
-  $("#cTor").addEventListener("click", async () => {
-    const mode = $("#cTorMode").value;
-    const status = $("#cStatus");
-    const btn = $("#cTor"); const old = btn.textContent;
-    btn.textContent = "Starting Tor…"; btn.disabled = true; status.textContent = "";
-    const res = await send("companionConnectTor", { mode });
-    btn.textContent = old; btn.disabled = false;
-    const inner = res?.result;
-    status.textContent = inner?.ok
-      ? `Tor (${inner.mode}) starting · SOCKS 127.0.0.1:${inner.socksPort} — bootstrap may take a moment`
-      : "Tor failed: " + (inner?.error || res?.error || "companion not installed");
-    refresh();
+  let timer = null;
+  api.storage.onChanged.addListener((_c, area) => {
+    if (area !== "local") return;
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 150); // live, but debounced
   });
-
-  $("#cDisconnect").addEventListener("click", async () => {
-    await send("companionDisconnect", {});
-    $("#cStatus").textContent = "Disconnected";
-    refresh();
-  });
+  refresh();
 }
 
-let refreshTimer = null;
-api.storage.onChanged.addListener((_c, area) => {
-  if (area !== "local") return;
-  clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refresh, 150); // debounce live updates
-});
-
-initControls();
-refresh();
+init();

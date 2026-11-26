@@ -1,9 +1,11 @@
 // Onboarding: shows only the permissions this browser still needs, opens the
 // right Secure DNS settings page (or shows steps where an extension can't
-// open settings, e.g. Firefox), and reports whether the companion is present.
+// open settings, e.g. Firefox), finds proxies already running here, and says
+// whether the companion is installed.
 
-import { $, el, setChildren } from "./shared/dom.js";
+import { $, el, setChildren, busy } from "./shared/dom.js";
 import { send, getApi } from "./shared/messaging.js";
+import { t, localize } from "./shared/i18n.js";
 
 const api = getApi();
 
@@ -30,13 +32,9 @@ async function render() {
   setRow("#rowPrivate", showPrivate, false);
   $("#accessCard").hidden = !(needHost || needConsent || showPrivate);
 
-  if (s.browser?.name) $("#browserName").textContent = s.browser.name;
+  $("#step1Text").textContent = t("onbStep1Text", { browser: s.browser?.name || t("yourBrowser") });
   const c = s.companion || {};
-  $("#companionLine").textContent = !c.supported
-    ? "This browser can't talk to the companion app — use a proxy or Tor you already run."
-    : c.available
-      ? "✓ Companion detected — connect a transport from the popup."
-      : "Companion not installed yet. Setup guide: companion/README.md · server/README.md.";
+  $("#companionLine").textContent = !c.supported ? t("onbCompanionUnsupported") : c.available ? t("onbCompanionFound") : t("onbCompanionMissing");
 }
 
 // permissions.request must be called from the click itself (user gesture).
@@ -53,10 +51,29 @@ $("#openDns").addEventListener("click", async () => {
   const res = await send("openSecureDnsSettings");
   const guide = res?.guide;
   const steps = $("#dnsSteps");
-  if (res?.opened || !guide) { steps.hidden = true; return; }
-  setChildren(steps, (guide.copyUrl ? [`Open ${guide.copyUrl}`] : []).concat(guide.steps || []).map((s) => el("li", { text: s })));
+  if (res?.opened || !guide) {
+    steps.hidden = true;
+    return;
+  }
+  setChildren(steps, [guide.copyUrl && t("openUrl", { url: guide.copyUrl }), ...(guide.steps || [])].filter(Boolean).map((x) => el("li", { text: x })));
   steps.hidden = false;
 });
+
+$("#discover").addEventListener("click", async (e) => {
+  const out = $("#discoverResult");
+  const res = await busy(e.currentTarget, t("searching"), () => send("discoverLocalProxies"));
+  if (!res?.ok || res.error) {
+    out.textContent = res?.error || t("errorGeneric");
+    out.className = "note bad";
+  } else if (res.found?.length) {
+    out.textContent = t("discoverFound", { list: res.found.map((f) => `${f.label} (${f.port})`).join(", ") });
+    out.className = "note good";
+  } else {
+    out.textContent = t("discoverNone", { count: res.tested });
+    out.className = "note";
+  }
+});
+$("#openTransports").addEventListener("click", () => send("openDashboard", { section: "transports" }));
 
 $("#done").addEventListener("click", async () => {
   const tab = await api.tabs.getCurrent();
@@ -64,4 +81,5 @@ $("#done").addEventListener("click", async () => {
   else window.close();
 });
 
+localize();
 render();

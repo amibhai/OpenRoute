@@ -20,7 +20,7 @@ export function tempDir(prefix) {
 // deep detection or proxy logins on Chromium (a test can't click the prompt).
 export function stageExtension({ allUrls = false } = {}) {
   const dir = tempDir("openroute-ext-");
-  for (const p of ["manifest.json", "src", "icons", "LICENSE"]) cpSync(join(ROOT, p), join(dir, p), { recursive: true });
+  for (const p of ["manifest.json", "src", "icons", "_locales", "LICENSE"]) cpSync(join(ROOT, p), join(dir, p), { recursive: true });
   if (allUrls) {
     const m = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
     m.host_permissions = [...new Set([...(m.host_permissions || []), "<all_urls>"])];
